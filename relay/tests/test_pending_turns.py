@@ -73,8 +73,7 @@ class TestPendingTurnPersistence:
             update_stage,
         )
 
-        loop = asyncio.get_event_loop()
-        turn_id = loop.run_until_complete(create_pending_turn(
+        turn_id = asyncio.run(create_pending_turn(
             scene_id=scene_id,
             player_id="player_001",
             npc_id="seta_inkglass_dark",
@@ -103,8 +102,7 @@ class TestPendingTurnPersistence:
             update_stage,
         )
 
-        loop = asyncio.get_event_loop()
-        turn_id = loop.run_until_complete(create_pending_turn(
+        turn_id = asyncio.run(create_pending_turn(
             scene_id=scene_id,
             player_id="player_001",
             npc_id="seta_inkglass_dark",
@@ -113,23 +111,23 @@ class TestPendingTurnPersistence:
         ))
 
         # Progress through stages
-        loop.run_until_complete(update_stage(turn_id, "analysis"))
-        pt = loop.run_until_complete(get_pending_turn(turn_id))
+        asyncio.run(update_stage(turn_id, "analysis"))
+        pt = asyncio.run(get_pending_turn(turn_id))
         assert pt["stage"] == "analysis"
 
-        loop.run_until_complete(update_stage(
+        asyncio.run(update_stage(
             turn_id, "checks_resolved",
             analysis_result={"checks": [{"skill": "perception", "dc": 14}]},
         ))
-        pt = loop.run_until_complete(get_pending_turn(turn_id))
+        pt = asyncio.run(get_pending_turn(turn_id))
         assert pt["stage"] == "checks_resolved"
         assert pt["analysis_result"]["checks"][0]["skill"] == "perception"
 
-        loop.run_until_complete(update_stage(
+        asyncio.run(update_stage(
             turn_id, "streaming",
             check_results=[{"skill": "perception", "dc": 14, "passed": True, "roll": 18, "modifier": 5, "total": 23}],
         ))
-        pt = loop.run_until_complete(get_pending_turn(turn_id))
+        pt = asyncio.run(get_pending_turn(turn_id))
         assert pt["stage"] == "streaming"
         assert pt["check_results"][0]["passed"] is True
 
@@ -142,8 +140,7 @@ class TestPendingTurnPersistence:
             create_pending_turn,
         )
 
-        loop = asyncio.get_event_loop()
-        turn_id = loop.run_until_complete(create_pending_turn(
+        turn_id = asyncio.run(create_pending_turn(
             scene_id=scene_id,
             player_id="player_001",
             npc_id="seta_inkglass_dark",
@@ -151,7 +148,7 @@ class TestPendingTurnPersistence:
             player_input="She opens the cabinet.",
         ))
 
-        loop.run_until_complete(complete_turn(turn_id, "Seta watches silently."))
+        asyncio.run(complete_turn(turn_id, "Seta watches silently."))
 
         # Check scene was updated
         scene = db_client.get(f"/scene/{scene_id}", headers=auth_header)
@@ -172,8 +169,7 @@ class TestPendingTurnPersistence:
             fail_turn,
         )
 
-        loop = asyncio.get_event_loop()
-        turn_id = loop.run_until_complete(create_pending_turn(
+        turn_id = asyncio.run(create_pending_turn(
             scene_id=scene_id,
             player_id="player_001",
             npc_id="seta_inkglass_dark",
@@ -181,7 +177,7 @@ class TestPendingTurnPersistence:
             player_input="Test input.",
         ))
 
-        loop.run_until_complete(fail_turn(turn_id, "API error"))
+        asyncio.run(fail_turn(turn_id, "API error"))
 
         state = db_client.get(f"/session/{session_id}/state", headers=auth_header)
         assert len(state.json()["pending_turns"]) == 0
@@ -195,8 +191,7 @@ class TestPendingTurnPersistence:
             update_stage,
         )
 
-        loop = asyncio.get_event_loop()
-        turn_id = loop.run_until_complete(create_pending_turn(
+        turn_id = asyncio.run(create_pending_turn(
             scene_id=scene_id,
             player_id="player_001",
             npc_id="seta_inkglass_dark",
@@ -205,7 +200,7 @@ class TestPendingTurnPersistence:
         ))
 
         # Simulate crash after analysis stage
-        loop.run_until_complete(update_stage(
+        asyncio.run(update_stage(
             turn_id, "analysis",
             analysis_result={"draft_response": "Seta frowns."},
         ))
@@ -239,15 +234,14 @@ class TestPendingTurnPersistence:
 
         from relay.persistence.pending_turns import create_pending_turn
 
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(create_pending_turn(
+        asyncio.run(create_pending_turn(
             scene_id=scene1,
             player_id="player_001",
             npc_id="seta_inkglass_dark",
             turn_type="rp",
             player_input="Turn in scene 1",
         ))
-        loop.run_until_complete(create_pending_turn(
+        asyncio.run(create_pending_turn(
             scene_id=scene2,
             player_id="player_001",
             npc_id="merchant_inkglass_dark",
