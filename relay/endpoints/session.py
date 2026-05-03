@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from relay.auth.middleware import get_current_token
 from relay.auth.tokens import AccountTokenPayload, SessionTokenPayload, create_session_token
 from relay.database import get_db
-from relay.models import Character, GameSession, Scene
+from relay.models import Character, GameSession, PendingTurn, Scene
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,20 @@ class SceneResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PendingTurnResponse(BaseModel):
+    turn_id: str
+    scene_id: str
+    npc_id: str
+    turn_type: str
+    stage: str
+    player_input: str
+    check_results: list | None
+    animation_directives: list | None
+    scene_changes: dict | None
+    final_response: str | None
+    created_at: datetime | None
+
+
 class SessionStateResponse(BaseModel):
     session_id: str
     player_id: str
@@ -82,6 +96,7 @@ class SessionStateResponse(BaseModel):
     started_at: datetime
     ended_at: datetime | None
     scenes: list[SceneResponse]
+    pending_turns: list[PendingTurnResponse] = []
 
 
 class SessionEndResponse(BaseModel):
@@ -245,6 +260,31 @@ async def get_session_state(session_id: str, token: Token, db: DB) -> SessionSta
     )
     scenes = list(scenes_result.scalars().all())
 
+    # Collect incomplete pending turns across all scenes in this session
+    scene_ids = [s.id for s in scenes]
+    pending_turns_list: list[PendingTurnResponse] = []
+    if scene_ids:
+        pt_result = await db.execute(
+            select(PendingTurn)
+            .where(PendingTurn.scene_id.in_(scene_ids))
+            .where(PendingTurn.stage.notin_(["complete", "failed"]))
+            .order_by(PendingTurn.created_at)
+        )
+        for pt in pt_result.scalars().all():
+            pending_turns_list.append(PendingTurnResponse(
+                turn_id=pt.id,
+                scene_id=pt.scene_id,
+                npc_id=pt.npc_id,
+                turn_type=pt.turn_type,
+                stage=pt.stage,
+                player_input=pt.player_input,
+                check_results=pt.check_results,
+                animation_directives=pt.animation_directives,
+                scene_changes=pt.scene_changes,
+                final_response=pt.final_response,
+                created_at=pt.created_at,
+            ))
+
     return SessionStateResponse(
         session_id=session.id,
         player_id=session.player_id,
@@ -258,6 +298,7 @@ async def get_session_state(session_id: str, token: Token, db: DB) -> SessionSta
         started_at=session.started_at,
         ended_at=session.ended_at,
         scenes=[SceneResponse.model_validate(s) for s in scenes],
+        pending_turns=pending_turns_list,
     )
 
 

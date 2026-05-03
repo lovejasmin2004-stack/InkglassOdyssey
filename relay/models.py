@@ -116,3 +116,40 @@ class Scene(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     session: Mapped[GameSession] = relationship("GameSession", back_populates="scenes")
+    pending_turns: Mapped[list[PendingTurn]] = relationship("PendingTurn", back_populates="scene")
+
+
+class PendingTurn(Base):
+    """Tracks a turn through processing stages for crash recovery.
+
+    Written before processing begins, updated at each stage.
+    Invariant #12: session state persisted before processing.
+    """
+
+    __tablename__ = "pending_turns"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    scene_id: Mapped[str] = mapped_column(String, ForeignKey("scenes.id"), nullable=False, index=True)
+    player_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    npc_id: Mapped[str] = mapped_column(String, nullable=False)
+    turn_type: Mapped[str] = mapped_column(String, nullable=False)  # rp | quickchat
+
+    # received -> analysis -> checks_resolved -> streaming -> complete | failed
+    stage: Mapped[str] = mapped_column(String, nullable=False, default="received")
+
+    player_input: Mapped[str] = mapped_column(Text, nullable=False)
+    character_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    # Intermediate results saved at each stage
+    analysis_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    check_results: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    animation_directives: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    scene_changes: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    final_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+    scene: Mapped[Scene] = relationship("Scene", back_populates="pending_turns")

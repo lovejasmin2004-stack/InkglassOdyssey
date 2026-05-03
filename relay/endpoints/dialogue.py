@@ -19,6 +19,13 @@ from relay.ai.rp_prompts import (
 from relay.auth.tokens import decode_token
 from relay.checks.resolver import resolve_check, validate_check
 from relay.config import settings
+from relay.persistence.pending_turns import (
+    complete_turn,
+    create_pending_turn,
+    fail_turn,
+    get_pending_turns,
+    update_stage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +61,33 @@ async def _authenticate(ws: WebSocket) -> dict | None:
         return None
 
 
+async def _send_recovery_data(ws: WebSocket, player_id: str) -> None:
+    """On reconnect, send any incomplete pending turns so the client can recover."""
+    pending = await get_pending_turns(player_id)
+    if not pending:
+        return
+
+    for pt in pending:
+        await ws.send_json({
+            "type": "turn_recovery",
+            "turn_id": pt["turn_id"],
+            "scene_id": pt["scene_id"],
+            "npc_id": pt["npc_id"],
+            "turn_type": pt["turn_type"],
+            "stage": pt["stage"],
+            "player_input": pt["player_input"],
+            "check_results": pt["check_results"],
+            "animation_directives": pt["animation_directives"],
+            "scene_changes": pt["scene_changes"],
+            "final_response": pt["final_response"],
+        })
+
+    logger.info(
+        "Recovery data sent",
+        extra={"player_id": player_id, "pending_count": len(pending)},
+    )
+
+
 @router.websocket("/dialogue")
 async def dialogue_ws(ws: WebSocket) -> None:
     await ws.accept()
@@ -65,6 +99,9 @@ async def dialogue_ws(ws: WebSocket) -> None:
 
     player_id = auth["player_id"]
     logger.info("WS authenticated", extra={"player_id": player_id})
+
+    # Send recovery data for any interrupted turns
+    await _send_recovery_data(ws, player_id)
 
     history: list[dict[str, str]] = []
     last_message_time: float = 0.0
@@ -93,9 +130,9 @@ async def dialogue_ws(ws: WebSocket) -> None:
             in_flight = True
             try:
                 if msg_type == "quickchat_turn":
-                    await _handle_quickchat(ws, msg, history)
+                    await _handle_quickchat(ws, msg, history, player_id)
                 elif msg_type == "rp_turn":
-                    await _handle_rp_turn(ws, msg, history)
+                    await _handle_rp_turn(ws, msg, history, player_id)
                 else:
                     await _send_error(ws, "unknown_type", f"Unrecognised message type: {msg_type}")
             finally:
@@ -115,9 +152,12 @@ async def dialogue_ws(ws: WebSocket) -> None:
 # Quick-chat handler (single LLM call, no scene state)
 # ---------------------------------------------------------------------------
 
-async def _handle_quickchat(ws: WebSocket, msg: dict, history: list[dict[str, str]]) -> None:
+async def _handle_quickchat(
+    ws: WebSocket, msg: dict, history: list[dict[str, str]], player_id: str,
+) -> None:
     npc_id = msg.get("npc_id")
     player_input = msg.get("text", "").strip()
+    scene_id = msg.get("scene_id", "")
 
     if not npc_id:
         await _send_error(ws, "missing_field", "quickchat_turn requires 'npc_id'")
@@ -131,12 +171,26 @@ async def _handle_quickchat(ws: WebSocket, msg: dict, history: list[dict[str, st
         await _send_error(ws, "not_found", f"NPC '{npc_id}' not found")
         return
 
+    # === Persist pending turn before any processing (Invariant #12) ===
+    turn_id = ""
+    if scene_id:
+        turn_id = await create_pending_turn(
+            scene_id=scene_id,
+            player_id=player_id,
+            npc_id=npc_id,
+            turn_type="quickchat",
+            player_input=player_input,
+        )
+
     system_prompt = build_quickchat_system_prompt(npc)
     history.append({"role": "user", "content": player_input})
 
     client = _get_client()
-    turn_id = f"qc_{int(time.time() * 1000)}"
-    await ws.send_json({"type": "stream_start", "turn_id": turn_id, "npc_id": npc_id})
+    ws_turn_id = turn_id or f"qc_{int(time.time() * 1000)}"
+    await ws.send_json({"type": "stream_start", "turn_id": ws_turn_id, "npc_id": npc_id})
+
+    if turn_id:
+        await update_stage(turn_id, "streaming")
 
     full_response = ""
     try:
@@ -148,14 +202,23 @@ async def _handle_quickchat(ws: WebSocket, msg: dict, history: list[dict[str, st
         ) as stream:
             async for text in stream.text_stream:
                 full_response += text
-                await ws.send_json({"type": "stream_chunk", "turn_id": turn_id, "text": text})
+                await ws.send_json({"type": "stream_chunk", "turn_id": ws_turn_id, "text": text})
 
         history.append({"role": "assistant", "content": full_response})
-        await ws.send_json({"type": "stream_end", "turn_id": turn_id, "npc_id": npc_id, "full_text": full_response})
-        logger.info("Quick-chat turn complete", extra={"turn_id": turn_id, "npc_id": npc_id})
+        await ws.send_json({
+            "type": "stream_end", "turn_id": ws_turn_id,
+            "npc_id": npc_id, "full_text": full_response,
+        })
+
+        if turn_id:
+            await complete_turn(turn_id, full_response)
+
+        logger.info("Quick-chat turn complete", extra={"turn_id": ws_turn_id, "npc_id": npc_id})
 
     except anthropic.APIError as e:
         logger.error("Anthropic API error", extra={"error": str(e)})
+        if turn_id:
+            await fail_turn(turn_id, str(e))
         await _send_error(ws, "llm_error", "Failed to get NPC response. Try again.")
 
 
@@ -163,11 +226,14 @@ async def _handle_quickchat(ws: WebSocket, msg: dict, history: list[dict[str, st
 # RP mode handler (two-call turn flow)
 # ---------------------------------------------------------------------------
 
-async def _handle_rp_turn(ws: WebSocket, msg: dict, history: list[dict[str, str]]) -> None:
-    """Full RP turn: analysis call → check resolution → final prose call."""
+async def _handle_rp_turn(
+    ws: WebSocket, msg: dict, history: list[dict[str, str]], player_id: str,
+) -> None:
+    """Full RP turn: analysis call -> check resolution -> final prose call."""
     npc_id = msg.get("npc_id")
     player_prose = msg.get("text", "").strip()
     character_sheet = msg.get("character", {})
+    scene_id = msg.get("scene_id", "")
 
     if not npc_id:
         await _send_error(ws, "missing_field", "rp_turn requires 'npc_id'")
@@ -185,14 +251,29 @@ async def _handle_rp_turn(ws: WebSocket, msg: dict, history: list[dict[str, str]
     skill_profs = character_sheet.get("skill_proficiencies", [])
     level = character_sheet.get("level", 1)
 
+    # === Persist pending turn before any processing (Invariant #12) ===
+    turn_id = ""
+    if scene_id:
+        turn_id = await create_pending_turn(
+            scene_id=scene_id,
+            player_id=player_id,
+            npc_id=npc_id,
+            turn_type="rp",
+            player_input=player_prose,
+            character_snapshot=character_sheet,
+        )
+
     client = _get_client()
-    turn_id = f"rp_{int(time.time() * 1000)}"
+    ws_turn_id = turn_id or f"rp_{int(time.time() * 1000)}"
     system_prompt = build_rp_system_prompt(npc)
 
-    await ws.send_json({"type": "stream_start", "turn_id": turn_id, "npc_id": npc_id})
+    await ws.send_json({"type": "stream_start", "turn_id": ws_turn_id, "npc_id": npc_id})
 
     try:
         # === CALL 1: Structured analysis ===
+        if turn_id:
+            await update_stage(turn_id, "analysis")
+
         analysis_messages = build_analysis_messages(player_prose, history)
 
         analysis_response = await client.messages.create(
@@ -203,12 +284,21 @@ async def _handle_rp_turn(ws: WebSocket, msg: dict, history: list[dict[str, str]
         )
 
         analysis_text = analysis_response.content[0].text
-        logger.debug("Analysis response received", extra={"turn_id": turn_id})
+        logger.debug("Analysis response received", extra={"turn_id": ws_turn_id})
 
         analysis = _parse_analysis(analysis_text)
         if analysis is None:
-            logger.warning("Failed to parse analysis JSON, falling back to draft-only", extra={"turn_id": turn_id})
-            analysis = {"checks": [], "scene_changes": {}, "animation_directives": [], "draft_response": analysis_text}
+            logger.warning(
+                "Failed to parse analysis JSON, falling back to draft-only",
+                extra={"turn_id": ws_turn_id},
+            )
+            analysis = {
+                "checks": [], "scene_changes": {},
+                "animation_directives": [], "draft_response": analysis_text,
+            }
+
+        if turn_id:
+            await update_stage(turn_id, "checks_resolved", analysis_result=analysis)
 
         # === Validate and resolve checks ===
         raw_checks = analysis.get("checks", [])
@@ -220,7 +310,7 @@ async def _handle_rp_turn(ws: WebSocket, msg: dict, history: list[dict[str, str]
             check_results.append(result)
             await ws.send_json({
                 "type": "check_result",
-                "turn_id": turn_id,
+                "turn_id": ws_turn_id,
                 "skill": result["skill"],
                 "dc": result["dc"],
                 "roll": result["roll"],
@@ -238,7 +328,7 @@ async def _handle_rp_turn(ws: WebSocket, msg: dict, history: list[dict[str, str]
         for anim in valid_animations:
             await ws.send_json({
                 "type": "animation_directive",
-                "turn_id": turn_id,
+                "turn_id": ws_turn_id,
                 "target": anim["target"],
                 "directive": anim["directive"],
             })
@@ -248,9 +338,17 @@ async def _handle_rp_turn(ws: WebSocket, msg: dict, history: list[dict[str, str]
         if scene_changes:
             await ws.send_json({
                 "type": "scene_update",
-                "turn_id": turn_id,
+                "turn_id": ws_turn_id,
                 "changes": scene_changes,
             })
+
+        if turn_id:
+            await update_stage(
+                turn_id, "streaming",
+                check_results=check_results,
+                animation_directives=valid_animations,
+                scene_changes=scene_changes,
+            )
 
         # === CALL 2: Final prose with check results ===
         draft = analysis.get("draft_response", "")
@@ -265,30 +363,37 @@ async def _handle_rp_turn(ws: WebSocket, msg: dict, history: list[dict[str, str]
         ) as stream:
             async for text in stream.text_stream:
                 full_response += text
-                await ws.send_json({"type": "stream_chunk", "turn_id": turn_id, "text": text})
+                await ws.send_json({"type": "stream_chunk", "turn_id": ws_turn_id, "text": text})
 
         # === Commit to history ===
         history.append({"role": "user", "content": player_prose})
         history.append({"role": "assistant", "content": full_response})
 
-        await ws.send_json({"type": "stream_end", "turn_id": turn_id, "npc_id": npc_id, "full_text": full_response})
+        await ws.send_json({
+            "type": "stream_end", "turn_id": ws_turn_id,
+            "npc_id": npc_id, "full_text": full_response,
+        })
+
+        if turn_id:
+            await complete_turn(turn_id, full_response)
+
         logger.info(
             "RP turn complete",
-            extra={"turn_id": turn_id, "npc_id": npc_id, "checks_resolved": len(check_results)},
+            extra={"turn_id": ws_turn_id, "npc_id": npc_id, "checks_resolved": len(check_results)},
         )
 
     except anthropic.APIError as e:
-        logger.error("Anthropic API error during RP turn", extra={"error": str(e), "turn_id": turn_id})
+        logger.error("Anthropic API error during RP turn", extra={"error": str(e), "turn_id": ws_turn_id})
+        if turn_id:
+            await fail_turn(turn_id, str(e))
         await _send_error(ws, "llm_error", "Failed to get NPC response. Try again.")
 
 
 def _parse_analysis(text: str) -> dict | None:
     """Extract the JSON object from the analysis LLM response."""
-    # The LLM may wrap JSON in markdown fences.
     cleaned = text.strip()
     if cleaned.startswith("```"):
         lines = cleaned.split("\n")
-        # Remove first and last ``` lines
         start = 1
         end = len(lines)
         for i in range(len(lines) - 1, 0, -1):
@@ -300,7 +405,6 @@ def _parse_analysis(text: str) -> dict | None:
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
-        # Try to find JSON object within the text
         brace_start = cleaned.find("{")
         brace_end = cleaned.rfind("}")
         if brace_start != -1 and brace_end != -1:
@@ -327,7 +431,7 @@ def _validate_animation_directives(
             validated.append(d)
         else:
             logger.debug(
-                "Animation directive rejected — not in NPC profile",
+                "Animation directive rejected -- not in NPC profile",
                 extra={"directive": directive, "npc_id": npc.id},
             )
     return validated

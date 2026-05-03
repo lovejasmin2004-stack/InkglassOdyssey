@@ -37,10 +37,16 @@ def db_client():
     import asyncio
     asyncio.get_event_loop().run_until_complete(_create_tables())
 
+    from relay.persistence.pending_turns import set_session_factory
+
     app.dependency_overrides[get_db] = override_get_db
+    set_session_factory(session_factory)
     with TestClient(app, raise_server_exceptions=False) as client:
         yield client
     app.dependency_overrides.clear()
+    # Restore default session factory
+    from relay.database import AsyncSessionLocal
+    set_session_factory(AsyncSessionLocal)
 
     asyncio.get_event_loop().run_until_complete(_drop_tables())
     asyncio.get_event_loop().run_until_complete(engine.dispose())
