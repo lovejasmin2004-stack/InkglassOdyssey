@@ -128,6 +128,17 @@ def _assert_session_active(session: GameSession) -> None:
         )
 
 
+def _ensure_utc(dt: datetime) -> datetime:
+    """Guarantee a timezone-aware UTC datetime.
+
+    SQLite strips tzinfo on storage; this restores it so arithmetic
+    against datetime.now(timezone.utc) is safe.
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def _build_session_summary(session: GameSession, scenes: list[Scene]) -> str:
     """Generate a summary of the session from scene data."""
     total_turns = sum(s.turn_count for s in scenes)
@@ -149,10 +160,7 @@ def _build_session_summary(session: GameSession, scenes: list[Scene]) -> str:
 def _build_session_analytics(session: GameSession, scenes: list[Scene]) -> dict:
     """Build analytics summary for the session."""
     now = datetime.now(timezone.utc)
-    started = session.started_at
-    if started.tzinfo is None:
-        started = started.replace(tzinfo=timezone.utc)
-    duration = (now - started).total_seconds()
+    duration = (now - _ensure_utc(session.started_at)).total_seconds()
 
     total_turns = sum(s.turn_count for s in scenes)
     scene_analytics = []
