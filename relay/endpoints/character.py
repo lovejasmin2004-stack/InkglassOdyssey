@@ -205,6 +205,19 @@ async def patch_character(character_id: str, body: CharacterPatch, token: Token,
     _assert_owns(token, character)
 
     updates = body.model_dump(exclude_none=True)
+
+    # Validate merged state before touching the ORM object so malformed
+    # values never reach the database.
+    preview = {c.key: getattr(character, c.key) for c in Character.__table__.columns}
+    preview.update(updates)
+    try:
+        CharacterResponse.model_validate(preview)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "validation_error", "message": str(exc)},
+        )
+
     for field, value in updates.items():
         setattr(character, field, value)
     character.updated_at = datetime.now(timezone.utc)
