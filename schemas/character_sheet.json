@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "character_sheet",
+  "title": "CharacterSheet",
+  "type": "object",
+  "required": [
+    "id", "player_id", "world_id", "name", "level", "specialisation_path_id",
+    "ability_scores", "skill_proficiencies", "saving_throw_proficiencies",
+    "hp_current", "hp_max", "ac", "passive_checks", "conditions",
+    "exhaustion_level", "resources", "wallet", "inventory", "equipped_gear",
+    "known_recipes", "companions", "relationships", "faction_standing",
+    "created_at", "updated_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id":                      { "type": "string" },
+    "player_id":               { "type": "string" },
+    "world_id":                { "type": "string" },
+    "name":                    { "type": "string", "minLength": 1 },
+    "level":                   { "type": "integer", "minimum": 1, "maximum": 20 },
+    "specialisation_path_id":  { "type": "string" },
+    "ability_scores": {
+      "type": "object",
+      "additionalProperties": { "type": "integer" }
+    },
+    "skill_proficiencies": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "saving_throw_proficiencies": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "hp_current":        { "type": "integer" },
+    "hp_max":            { "type": "integer", "minimum": 1 },
+    "ac":                { "type": "integer", "minimum": 0 },
+    "passive_checks": {
+      "type": "object",
+      "additionalProperties": { "type": "integer" }
+    },
+    "conditions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["condition_id", "source"],
+        "additionalProperties": false,
+        "properties": {
+          "condition_id":    { "type": "string" },
+          "duration_turns":  { "type": "integer", "minimum": 0 },
+          "expiry_turn":     { "type": "integer", "minimum": 0 },
+          "source":          { "type": "string" }
+        }
+      }
+    },
+    "exhaustion_level": { "type": "integer", "minimum": 0, "maximum": 6 },
+    "resources": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["current", "max"],
+        "properties": {
+          "current": { "type": "integer", "minimum": 0 },
+          "max":     { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "wallet": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "inventory": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["item_id", "quantity", "binding_state"],
+        "additionalProperties": false,
+        "properties": {
+          "item_id":       { "type": "string" },
+          "quantity":      { "type": "integer", "minimum": 1 },
+          "binding_state": { "type": "string", "enum": ["unbound", "bound"] }
+        }
+      }
+    },
+    "equipped_gear": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "known_recipes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "companions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["npc_id", "behavior_type", "loyalty_strain"],
+        "additionalProperties": false,
+        "properties": {
+          "npc_id":         { "type": "string" },
+          "behavior_type":  { "type": "string", "enum": ["aggressive", "supportive", "defensive"] },
+          "loyalty_strain": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "rp_voice_notes": { "type": ["string", "null"] },
+    "relationships": {
+      "type": "object",
+      "additionalProperties": { "type": "integer" }
+    },
+    "faction_standing": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": -100, "maximum": 100 }
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}

@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "world_config",
+  "title": "WorldConfig",
+  "type": "object",
+  "required": [
+    "world_id", "display_name", "content_rating", "rp_system_prompt_addendum",
+    "traversal_config", "currency_id", "ability_score_map",
+    "max_active_companions", "specialisation_paths", "rest_rules", "economy_config"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "world_id":                    { "type": "string" },
+    "display_name":                { "type": "string" },
+    "content_rating": {
+      "type": "string",
+      "enum": ["moderate", "mature"]
+    },
+    "rp_system_prompt_addendum":   { "type": "string" },
+    "traversal_config": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "currency_id":                 { "type": "string" },
+    "ability_score_map": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "equipment_slots": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "resource_model":              { "type": "object" },
+    "time_of_day_cycle":           { "type": "object" },
+    "max_active_companions": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1
+    },
+    "specialisation_paths": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "world", "display_name", "path_archetype", "hit_die",
+                     "saving_throw_proficiencies", "primary_ability_scores",
+                     "available_skill_proficiencies", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "id":            { "type": "string" },
+          "world":         { "type": "string" },
+          "display_name":  { "type": "string" },
+          "path_archetype": {
+            "type": "string",
+            "enum": ["scholar", "balanced", "martial", "tank"]
+          },
+          "hit_die": { "type": "integer", "enum": [6, 8, 10, 12] },
+          "saving_throw_proficiencies": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "primary_ability_scores": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "maxItems": 2
+          },
+          "available_skill_proficiencies": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "description": { "type": "string" }
+        }
+      },
+      "minItems": 1
+    },
+    "rest_rules": {
+      "type": "object",
+      "required": ["short_rest_hp_percent", "short_rest_hit_dice_formula",
+                   "long_rest_hp_percent", "long_rest_exhaustion_reduction"],
+      "additionalProperties": false,
+      "properties": {
+        "short_rest_hp_percent":          { "type": "number" },
+        "short_rest_hit_dice_formula":    { "type": "string" },
+        "long_rest_hp_percent":           { "type": "number" },
+        "long_rest_exhaustion_reduction": { "type": "integer" }
+      }
+    },
+    "economy_config": {
+      "type": "object",
+      "required": ["sell_back_ratio"],
+      "additionalProperties": true,
+      "properties": {
+        "earning_rates":         { "type": "object" },
+        "price_ranges":          { "type": "object" },
+        "sell_back_ratio":       { "type": "number", "minimum": 0, "maximum": 1 },
+        "crafting_margin_target":{ "type": "number" },
+        "transport_fare_ranges": { "type": "object" }
+      }
+    },
+    "environmental_effects_registry": {
+      "type": "array",
+      "items": { "type": "object" }
+    }
+  }
+}

@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "npc_personality",
+  "title": "NpcPersonality",
+  "type": "object",
+  "required": [
+    "id", "world_id", "name", "entity_class", "role", "level", "hit_die",
+    "personality_background", "goals", "weaknesses_fears", "communication_style",
+    "power_narrative", "knowledge_boundaries", "relationships", "secrets",
+    "few_shot_examples", "manipulation_resistance_examples",
+    "animation_profile", "world_position",
+    "ability_scores", "ac", "saving_throw_proficiencies", "skill_proficiencies", "hp_max"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id":        { "type": "string" },
+    "world_id":  { "type": "string" },
+    "name":      { "type": "string", "minLength": 1 },
+    "entity_class": {
+      "type": "string",
+      "enum": ["humanoid", "creature", "spirit", "construct"]
+    },
+    "role":     { "type": "string" },
+    "level":    { "type": "integer", "minimum": 1, "maximum": 20 },
+    "hit_die":  { "type": "integer", "enum": [6, 8, 10, 12] },
+
+    "personality_background": { "type": "string" },
+    "goals": {
+      "type": "object",
+      "required": ["immediate", "long_term"],
+      "additionalProperties": false,
+      "properties": {
+        "immediate":  { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "long_term":  { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "weaknesses_fears":    { "type": "string" },
+    "communication_style": { "type": "string" },
+    "power_narrative":     { "type": "string" },
+    "knowledge_boundaries": {
+      "type": "object",
+      "required": ["knows", "does_not_know"],
+      "additionalProperties": false,
+      "properties": {
+        "knows":         { "type": "array", "items": { "type": "string" } },
+        "does_not_know": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "relationships": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["npc_id", "relationship_type", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "npc_id":            { "type": "string" },
+          "relationship_type": {
+            "type": "string",
+            "enum": ["ally", "rival", "subordinate", "mentor", "family", "trading_partner", "unknown"]
+          },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "secrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["content", "reveal_condition", "secret_type"],
+        "additionalProperties": false,
+        "properties": {
+          "content": { "type": "string" },
+          "reveal_condition": {
+            "type": "string",
+            "enum": ["relationship_threshold", "quest_flag", "check_type_and_dc", "never"]
+          },
+          "secret_type": {
+            "type": "string",
+            "enum": ["information", "identity"]
+          },
+          "reveal_threshold":   { "type": "integer" },
+          "reveal_quest_flag":  { "type": "string" },
+          "reveal_check_type":  { "type": "string" },
+          "reveal_check_dc":    { "type": "integer" }
+        }
+      },
+      "minItems": 1
+    },
+    "few_shot_examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["player_input", "npc_response", "context_tag"],
+        "additionalProperties": false,
+        "properties": {
+          "player_input":  { "type": "string" },
+          "npc_response":  { "type": "string" },
+          "context_tag": {
+            "type": "string",
+            "enum": ["casual", "tense", "hostile", "transactional"]
+          }
+        }
+      },
+      "minItems": 2
+    },
+    "manipulation_resistance_examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["player_input", "npc_refusal"],
+        "additionalProperties": false,
+        "properties": {
+          "player_input": { "type": "string" },
+          "npc_refusal":  { "type": "string" }
+        }
+      },
+      "minItems": 1
+    },
+    "animation_profile": {
+      "type": "object",
+      "required": ["default_stance", "default_gaze", "emotional_state_to_animation"],
+      "additionalProperties": false,
+      "properties": {
+        "default_stance":  { "type": "string" },
+        "default_gaze":    { "type": "string" },
+        "emotional_state_to_animation": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "minProperties": 3
+        },
+        "movement_triggers": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "world_position": {
+      "type": "object",
+      "required": ["region_id"],
+      "additionalProperties": false,
+      "properties": {
+        "region_id":   { "type": "string" },
+        "coordinates": {
+          "type": "object",
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" },
+            "z": { "type": "number" }
+          }
+        }
+      }
+    },
+    "schedule": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["time_range", "position"],
+        "additionalProperties": false,
+        "properties": {
+          "time_range": { "type": "string" },
+          "position":   { "type": "string" }
+        }
+      }
+    },
+    "ability_scores": {
+      "type": "object",
+      "additionalProperties": { "type": "integer" }
+    },
+    "ac":     { "type": "integer", "minimum": 0 },
+    "saving_throw_proficiencies": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "skill_proficiencies": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "hp_max": { "type": "integer", "minimum": 1 },
+    "resistances":   { "type": "array", "items": { "type": "string" } },
+    "vulnerabilities": { "type": "array", "items": { "type": "string" } },
+    "immunities":    { "type": "array", "items": { "type": "string" } },
+    "conditions":    { "type": "array", "items": { "type": "object" } },
+    "notable_equipment": { "type": "array", "items": { "type": "string" } },
+
+    "shop_data": {
+      "type": "object",
+      "required": ["inventory", "pricing_policy", "restock_schedule"],
+      "additionalProperties": false,
+      "properties": {
+        "inventory": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["item_id", "stock_quantity", "markup_percentage"],
+            "additionalProperties": false,
+            "properties": {
+              "item_id":           { "type": "string" },
+              "stock_quantity":    { "type": "integer", "minimum": 0 },
+              "markup_percentage": { "type": "number" }
+            }
+          }
+        },
+        "pricing_policy": { "type": "string" },
+        "restock_schedule": {
+          "type": "string",
+          "enum": ["daily", "weekly", "never"]
+        },
+        "access_prerequisites": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "faction_standing_threshold": { "type": "integer" },
+            "level_requirement":          { "type": "integer" },
+            "quest_flags":                { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+
+    "companion_data": {
+      "type": "object",
+      "required": ["recruitment", "combat_profile", "ambient_behavior", "loyalty_strain_threshold"],
+      "additionalProperties": false,
+      "properties": {
+        "recruitment": {
+          "type": "object",
+          "required": ["affection_threshold", "recruitment_scenario_id"],
+          "additionalProperties": false,
+          "properties": {
+            "affection_threshold":      { "type": "integer" },
+            "recruitment_scenario_id":  { "type": "string" },
+            "recruitment_conditions":   { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "combat_profile": {
+          "type": "object",
+          "required": ["behavior_type", "abilities"],
+          "additionalProperties": false,
+          "properties": {
+            "behavior_type": {
+              "type": "string",
+              "enum": ["aggressive", "supportive", "defensive"]
+            },
+            "abilities":           { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 3 },
+            "directive_vocabulary": { "type": "object", "additionalProperties": { "type": "string" } }
+          }
+        },
+        "ambient_behavior": {
+          "type": "object",
+          "required": ["comment_frequency", "trigger_categories"],
+          "additionalProperties": false,
+          "properties": {
+            "comment_frequency":  { "type": "string" },
+            "trigger_categories": { "type": "array", "items": { "type": "string" } },
+            "mood_modifier":      { "type": "number" }
+          }
+        },
+        "loyalty_strain_threshold":     { "type": "integer" },
+        "world_event_reactions":        { "type": "array", "items": { "type": "object" } },
+        "farewell_template":            { "type": "string" },
+        "reunion_template":             { "type": "string" },
+        "dismissal_relationship_modifier": { "type": "integer" }
+      }
+    }
+  }
+}

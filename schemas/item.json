@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "item",
+  "title": "Item",
+  "type": "object",
+  "required": ["id", "world", "name", "type", "rarity", "weight", "value", "description_prose", "binding", "unique"],
+  "additionalProperties": false,
+  "properties": {
+    "id":               { "type": "string" },
+    "world":            { "type": "string" },
+    "name":             { "type": "string", "minLength": 1 },
+    "type": {
+      "type": "string",
+      "enum": ["weapon", "armour", "shield", "consumable", "material", "tool", "quest"]
+    },
+    "rarity": {
+      "type": "string",
+      "enum": ["common", "uncommon", "rare", "legendary"]
+    },
+    "weight":           { "type": "number", "minimum": 0 },
+    "value":            { "type": "integer", "minimum": 0 },
+    "description_prose":{ "type": "string" },
+    "binding": {
+      "type": "string",
+      "enum": ["unbound", "bind_on_equip", "bind_on_acquire"]
+    },
+    "unique":           { "type": "boolean" },
+    "stats":            { "type": "object" }
+  }
+}
