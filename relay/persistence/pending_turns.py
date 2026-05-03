@@ -170,17 +170,17 @@ async def get_pending_turns(player_id: str, scene_id: str | None = None) -> list
         ]
 
 
-async def get_scene_turn_history(scene_id: str) -> list[dict[str, str]]:
+async def get_scene_turn_history(scene_id: str) -> list[dict[str, str]] | None:
     """Load completed turn history for a scene as LLM message pairs.
 
     Returns a list of {role, content} dicts suitable for passing to the
-    Anthropic messages API.
+    Anthropic messages API, or None if the scene does not exist.
     """
     async with _get_session() as db:
         result = await db.execute(select(Scene).where(Scene.id == scene_id))
         scene = result.scalar_one_or_none()
         if scene is None:
-            return []
+            return None
 
         messages: list[dict[str, str]] = []
         for entry in scene.turn_history or []:
