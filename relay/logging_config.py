@@ -53,10 +53,15 @@ class JSONFormatter(logging.Formatter):
             "filename", "module", "exc_info", "exc_text", "stack_info",
             "lineno", "funcName", "created", "msecs", "relativeCreated",
             "thread", "threadName", "processName", "process", "message",
-            "taskName",
+            "taskName", "color_message",
         }
         for key in extra_keys:
-            payload[key] = record.__dict__[key]
+            val = record.__dict__[key]
+            try:
+                json.dumps(val)
+                payload[key] = val
+            except (TypeError, ValueError):
+                payload[key] = repr(val)
         return json.dumps(payload)
 
 
