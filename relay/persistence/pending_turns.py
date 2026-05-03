@@ -8,29 +8,29 @@ from __future__ import annotations
 
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from relay.database import AsyncSessionLocal
+import relay.database as _db
 from relay.models import PendingTurn, Scene
 
 logger = logging.getLogger(__name__)
 
 STAGES = ("received", "analysis", "checks_resolved", "streaming", "complete", "failed")
 
-_session_factory: async_sessionmaker[AsyncSession] = AsyncSessionLocal
 
+@asynccontextmanager
+async def _session():
+    """Open a short-lived DB session from the canonical factory.
 
-def set_session_factory(factory: async_sessionmaker[AsyncSession]) -> None:
-    """Override the session factory (used by tests)."""
-    global _session_factory
-    _session_factory = factory
-
-
-def _get_session() -> AsyncSession:
-    return _session_factory()
+    Uses relay.database.AsyncSessionLocal so that test overrides via
+    ``import relay.database; relay.database.AsyncSessionLocal = ...``
+    propagate automatically — no separate set_session_factory needed.
+    """
+    async with _db.AsyncSessionLocal() as session:
+        yield session
 
 
 async def create_pending_turn(
@@ -44,7 +44,7 @@ async def create_pending_turn(
 ) -> str:
     """Write a pending turn record before any processing begins. Returns turn ID."""
     turn_id = f"pt_{uuid.uuid4().hex[:12]}"
-    async with _get_session() as db:
+    async with _session() as db:
         pt = PendingTurn(
             id=turn_id,
             scene_id=scene_id,
@@ -75,7 +75,7 @@ async def update_stage(
     error_message: str | None = None,
 ) -> None:
     """Advance a pending turn to a new stage, persisting intermediate results."""
-    async with _get_session() as db:
+    async with _session() as db:
         result = await db.execute(select(PendingTurn).where(PendingTurn.id == turn_id))
         pt = result.scalar_one_or_none()
         if pt is None:
@@ -106,8 +106,7 @@ async def complete_turn(turn_id: str, final_response: str) -> None:
     """Mark a pending turn as complete with the final response."""
     await update_stage(turn_id, "complete", final_response=final_response)
 
-    # Also increment the scene's turn count
-    async with _get_session() as db:
+    async with _session() as db:
         result = await db.execute(select(PendingTurn).where(PendingTurn.id == turn_id))
         pt = result.scalar_one_or_none()
         if pt is None:
@@ -139,7 +138,7 @@ async def fail_turn(turn_id: str, error_message: str) -> None:
 
 async def get_pending_turns(player_id: str, scene_id: str | None = None) -> list[dict]:
     """Retrieve incomplete pending turns for recovery."""
-    async with _get_session() as db:
+    async with _session() as db:
         query = (
             select(PendingTurn)
             .where(PendingTurn.player_id == player_id)
@@ -176,7 +175,7 @@ async def get_scene_turn_history(scene_id: str) -> list[dict[str, str]] | None:
     Returns a list of {role, content} dicts suitable for passing to the
     Anthropic messages API, or None if the scene does not exist.
     """
-    async with _get_session() as db:
+    async with _session() as db:
         result = await db.execute(select(Scene).where(Scene.id == scene_id))
         scene = result.scalar_one_or_none()
         if scene is None:
@@ -195,7 +194,7 @@ async def get_scene_turn_history(scene_id: str) -> list[dict[str, str]] | None:
 
 async def get_pending_turn(turn_id: str) -> dict | None:
     """Retrieve a single pending turn by ID."""
-    async with _get_session() as db:
+    async with _session() as db:
         result = await db.execute(select(PendingTurn).where(PendingTurn.id == turn_id))
         t = result.scalar_one_or_none()
         if t is None:

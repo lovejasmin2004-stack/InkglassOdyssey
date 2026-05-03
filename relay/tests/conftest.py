@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import relay.database as _db
 from relay.database import get_db
 from relay.main import app
+from relay.middleware.rate_limit import clear_buckets
 from relay.models import Base
 
 _TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
@@ -34,18 +38,18 @@ def db_client():
                 await session.rollback()
                 raise
 
-    import asyncio
     asyncio.run(_create_tables())
 
-    from relay.persistence.pending_turns import set_session_factory
-
+    original_factory = _db.AsyncSessionLocal
+    _db.AsyncSessionLocal = session_factory
     app.dependency_overrides[get_db] = override_get_db
-    set_session_factory(session_factory)
+    clear_buckets()
+
     with TestClient(app, raise_server_exceptions=False) as client:
         yield client
+
     app.dependency_overrides.clear()
-    from relay.database import AsyncSessionLocal
-    set_session_factory(AsyncSessionLocal)
+    _db.AsyncSessionLocal = original_factory
 
     asyncio.run(_drop_tables())
     asyncio.run(engine.dispose())

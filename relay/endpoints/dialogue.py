@@ -328,21 +328,26 @@ async def _handle_rp_turn(
             max_tokens=1200,
             system=system_prompt,
             messages=analysis_messages,
+            tools=[_ANALYSIS_TOOL],
+            tool_choice={"type": "tool", "name": "scene_analysis"},
         )
 
-        analysis_text = analysis_response.content[0].text
-        logger.debug("Analysis response received", extra={"turn_id": ws_turn_id})
-
-        analysis = _parse_analysis(analysis_text)
+        analysis = _extract_tool_result(analysis_response)
         if analysis is None:
             logger.warning(
-                "Failed to parse analysis JSON, falling back to draft-only",
+                "Analysis tool call not returned, falling back to draft-only",
                 extra={"turn_id": ws_turn_id},
             )
+            fallback_text = ""
+            for block in analysis_response.content:
+                if hasattr(block, "text"):
+                    fallback_text = block.text
+                    break
             analysis = {
                 "checks": [], "scene_changes": {},
-                "animation_directives": [], "draft_response": analysis_text,
+                "animation_directives": [], "draft_response": fallback_text,
             }
+        logger.debug("Analysis response received", extra={"turn_id": ws_turn_id})
 
         if turn_id:
             await update_stage(turn_id, "checks_resolved", analysis_result=analysis)
@@ -457,29 +462,56 @@ async def _handle_rp_turn(
         await _send_error(ws, "llm_error", "Failed to get NPC response. Try again.")
 
 
-def _parse_analysis(text: str) -> dict | None:
-    """Extract the JSON object from the analysis LLM response."""
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        lines = cleaned.split("\n")
-        start = 1
-        end = len(lines)
-        for i in range(len(lines) - 1, 0, -1):
-            if lines[i].strip().startswith("```"):
-                end = i
-                break
-        cleaned = "\n".join(lines[start:end])
+_ANALYSIS_TOOL: dict = {
+    "name": "scene_analysis",
+    "description": "Return the structured analysis of a player's RP turn.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "checks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "skill": {"type": "string"},
+                        "dc": {"type": "integer", "minimum": 5, "maximum": 30},
+                        "reason": {"type": "string"},
+                        "advantage": {"type": "boolean"},
+                        "disadvantage": {"type": "boolean"},
+                    },
+                    "required": ["skill", "dc", "reason"],
+                },
+            },
+            "scene_changes": {
+                "type": "object",
+                "properties": {
+                    "emotional_temperature_delta": {"type": "number"},
+                    "notes": {"type": "string"},
+                },
+            },
+            "animation_directives": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "target": {"type": "string"},
+                        "directive": {"type": "string"},
+                    },
+                    "required": ["target", "directive"],
+                },
+            },
+            "draft_response": {"type": "string"},
+        },
+        "required": ["checks", "scene_changes", "animation_directives", "draft_response"],
+    },
+}
 
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        brace_start = cleaned.find("{")
-        brace_end = cleaned.rfind("}")
-        if brace_start != -1 and brace_end != -1:
-            try:
-                return json.loads(cleaned[brace_start:brace_end + 1])
-            except json.JSONDecodeError:
-                pass
+
+def _extract_tool_result(response) -> dict | None:
+    """Extract the tool-use input from the analysis LLM response."""
+    for block in response.content:
+        if block.type == "tool_use" and block.name == "scene_analysis":
+            return block.input
     return None
 
 

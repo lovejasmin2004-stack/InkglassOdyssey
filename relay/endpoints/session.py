@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from relay.auth.middleware import get_current_token
 from relay.auth.tokens import AccountTokenPayload, SessionTokenPayload, create_session_token
 from relay.database import get_db
+from relay.endpoints.scene import SceneResponse
 from relay.models import Character, GameSession, PendingTurn, Scene
 
 logger = logging.getLogger(__name__)
@@ -52,21 +53,6 @@ class SessionEndRequest(BaseModel):
     level_increment: bool = False
 
     model_config = {"extra": "forbid"}
-
-
-class SceneResponse(BaseModel):
-    id: str
-    session_id: str
-    npc_id: str
-    mode: str
-    status: str
-    scene_state: dict
-    turn_count: int
-    scene_summary: str | None
-    started_at: datetime
-    ended_at: datetime | None
-
-    model_config = {"from_attributes": True}
 
 
 class PendingTurnResponse(BaseModel):
@@ -377,138 +363,3 @@ async def end_session(session_id: str, body: SessionEndRequest, token: Token, db
         ended_at=session.ended_at,
         scenes_ended=scenes_ended,
     )
-
-
-# ---------------------------------------------------------------------------
-# Scene endpoints
-# ---------------------------------------------------------------------------
-
-@router.post("/scene", status_code=status.HTTP_201_CREATED, response_model=SceneResponse)
-async def start_scene(
-    body: dict,
-    token: Token,
-    db: DB,
-) -> SceneResponse:
-    session_id = body.get("session_id")
-    npc_id = body.get("npc_id")
-    mode = body.get("mode", "rp")
-
-    if not session_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "missing_field", "message": "session_id is required"},
-        )
-    if not npc_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "missing_field", "message": "npc_id is required"},
-        )
-    if mode not in ("rp", "quickchat"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "invalid_field", "message": "mode must be 'rp' or 'quickchat'"},
-        )
-
-    result = await db.execute(select(GameSession).where(GameSession.id == session_id))
-    session = result.scalar_one_or_none()
-
-    if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "not_found", "message": "Session not found"},
-        )
-    _assert_session_owner(token, session)
-    _assert_session_active(session)
-
-    scene = Scene(
-        id=str(uuid.uuid4()),
-        session_id=session_id,
-        npc_id=npc_id,
-        mode=mode,
-        status="active",
-        scene_state={"emotional_temperature": 0.0},
-        turn_history=[],
-        turn_count=0,
-        started_at=datetime.now(timezone.utc),
-    )
-    db.add(scene)
-    await db.flush()
-    await db.refresh(scene)
-
-    logger.info(
-        "Scene started",
-        extra={"scene_id": scene.id, "session_id": session_id, "npc_id": npc_id, "mode": mode},
-    )
-    return SceneResponse.model_validate(scene)
-
-
-@router.get("/scene/{scene_id}", response_model=SceneResponse)
-async def get_scene(scene_id: str, token: Token, db: DB) -> SceneResponse:
-    result = await db.execute(select(Scene).where(Scene.id == scene_id))
-    scene = result.scalar_one_or_none()
-
-    if scene is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "not_found", "message": "Scene not found"},
-        )
-
-    # Verify ownership through parent session
-    sess_result = await db.execute(select(GameSession).where(GameSession.id == scene.session_id))
-    session = sess_result.scalar_one_or_none()
-    if session is None or session.player_id != token.player_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "forbidden", "message": "Scene belongs to another player"},
-        )
-
-    return SceneResponse.model_validate(scene)
-
-
-@router.post("/scene/{scene_id}/end", response_model=SceneResponse)
-async def end_scene(scene_id: str, token: Token, db: DB) -> SceneResponse:
-    result = await db.execute(select(Scene).where(Scene.id == scene_id))
-    scene = result.scalar_one_or_none()
-
-    if scene is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "not_found", "message": "Scene not found"},
-        )
-
-    # Verify ownership through parent session
-    sess_result = await db.execute(select(GameSession).where(GameSession.id == scene.session_id))
-    session = sess_result.scalar_one_or_none()
-    if session is None or session.player_id != token.player_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "forbidden", "message": "Scene belongs to another player"},
-        )
-
-    if scene.status != "active":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "scene_ended", "message": "Scene has already ended"},
-        )
-
-    now = datetime.now(timezone.utc)
-    scene.status = "ended"
-    scene.ended_at = now
-
-    # Generate scene summary from turn history
-    turns = scene.turn_history or []
-    if turns:
-        scene.scene_summary = (
-            f"Scene with {scene.npc_id}: {scene.turn_count} turn(s) in {scene.mode} mode."
-        )
-    else:
-        scene.scene_summary = f"Scene with {scene.npc_id}: no turns recorded."
-
-    await db.flush()
-    await db.refresh(scene)
-
-    logger.info(
-        "Scene ended",
-        extra={"scene_id": scene_id, "npc_id": scene.npc_id, "turn_count": scene.turn_count},
-    )
-    return SceneResponse.model_validate(scene)
