@@ -28,7 +28,12 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     auth_header = request.headers.get("Authorization", "")
+    client_ip = request.client.host if request.client else "unknown"
     if not auth_header.startswith("Bearer "):
+        logger.warning(
+            "Auth failed: missing or malformed header",
+            extra={"path": request.url.path, "client_ip": client_ip},
+        )
         return _unauthorized("Missing or malformed Authorization header")
 
     token = auth_header.removeprefix("Bearer ").strip()
@@ -36,8 +41,16 @@ async def auth_middleware(request: Request, call_next):
         payload = decode_token(token)
         request.state.token = payload
     except jwt.ExpiredSignatureError:
+        logger.warning(
+            "Auth failed: expired token",
+            extra={"path": request.url.path, "client_ip": client_ip},
+        )
         return _unauthorized("Token has expired")
     except jwt.PyJWTError:
+        logger.warning(
+            "Auth failed: invalid token",
+            extra={"path": request.url.path, "client_ip": client_ip},
+        )
         return _unauthorized("Invalid token")
 
     return await call_next(request)
@@ -61,7 +74,12 @@ async def get_current_token(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> AccountTokenPayload | SessionTokenPayload:
     """FastAPI Depends() — extracts and validates the bearer token."""
+    client_ip = request.client.host if request.client else "unknown"
     if credentials is None:
+        logger.warning(
+            "Auth failed: no credentials",
+            extra={"path": request.url.path, "client_ip": client_ip},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "unauthorized", "message": "Missing Authorization header"},
@@ -70,12 +88,20 @@ async def get_current_token(
     try:
         return decode_token(credentials.credentials)
     except jwt.ExpiredSignatureError:
+        logger.warning(
+            "Auth failed: expired token",
+            extra={"path": request.url.path, "client_ip": client_ip},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "unauthorized", "message": "Token has expired"},
             headers={"WWW-Authenticate": "Bearer"},
         )
     except jwt.PyJWTError:
+        logger.warning(
+            "Auth failed: invalid token",
+            extra={"path": request.url.path, "client_ip": client_ip},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "unauthorized", "message": "Invalid token"},
