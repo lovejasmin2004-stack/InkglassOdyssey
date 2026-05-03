@@ -7,9 +7,14 @@ from typing import Annotated
 from fastapi import Depends, FastAPI
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
 from relay.auth.middleware import auth_middleware, get_current_token
 from relay.auth.tokens import AccountTokenPayload, SessionTokenPayload
 from relay.config import settings
+from relay.endpoints.character import router as character_router
 from relay.logging_config import setup_logging
 
 setup_logging(level=settings.log_level)
@@ -40,6 +45,26 @@ app = FastAPI(
 )
 
 app.add_middleware(BaseHTTPMiddleware, dispatch=auth_middleware)
+
+app.include_router(character_router)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request, exc: StarletteHTTPException):
+    detail = exc.detail
+    if isinstance(detail, dict) and "code" in detail:
+        body = detail
+    else:
+        body = {"code": str(exc.status_code), "message": str(detail)}
+    return JSONResponse(status_code=exc.status_code, content=body)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content={"code": "validation_error", "message": str(exc.errors())},
+    )
 
 
 @app.get("/health")
