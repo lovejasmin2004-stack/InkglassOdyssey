@@ -24,6 +24,7 @@ from relay.persistence.pending_turns import (
     create_pending_turn,
     fail_turn,
     get_pending_turns,
+    get_scene_turn_history,
     update_stage,
 )
 
@@ -103,7 +104,7 @@ async def dialogue_ws(ws: WebSocket) -> None:
     # Send recovery data for any interrupted turns
     await _send_recovery_data(ws, player_id)
 
-    history: list[dict[str, str]] = []
+    scene_histories: dict[str, list[dict[str, str]]] = {}
     last_message_time: float = 0.0
     in_flight = False
 
@@ -127,6 +128,9 @@ async def dialogue_ws(ws: WebSocket) -> None:
                 await _send_error(ws, "turn_in_progress", "A turn is already being processed")
                 continue
 
+            scene_id = msg.get("scene_id", "")
+            history = await _get_or_load_history(scene_histories, scene_id)
+
             in_flight = True
             try:
                 if msg_type == "quickchat_turn":
@@ -146,6 +150,27 @@ async def dialogue_ws(ws: WebSocket) -> None:
             await _send_error(ws, "internal_error", "An unexpected error occurred")
         except Exception:
             pass
+
+
+async def _get_or_load_history(
+    scene_histories: dict[str, list[dict[str, str]]],
+    scene_id: str,
+) -> list[dict[str, str]]:
+    """Return the history list for a scene, loading from DB on first access."""
+    if scene_id in scene_histories:
+        return scene_histories[scene_id]
+
+    if scene_id:
+        history = await get_scene_turn_history(scene_id)
+        logger.info(
+            "Scene history loaded from DB",
+            extra={"scene_id": scene_id, "turns_restored": len(history) // 2},
+        )
+    else:
+        history = []
+
+    scene_histories[scene_id] = history
+    return history
 
 
 # ---------------------------------------------------------------------------
