@@ -10,7 +10,7 @@ import jwt
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from relay.ai.chat_prompts import build_quickchat_system_prompt
-from relay.ai.npc_loader import load_npc
+from relay.ai.npc_loader import NpcLoadError, load_npc
 from relay.ai.rp_prompts import (
     build_analysis_messages,
     build_final_prose_messages,
@@ -166,7 +166,12 @@ async def _handle_quickchat(
         await _send_error(ws, "missing_field", "quickchat_turn requires 'text'")
         return
 
-    npc = load_npc(npc_id)
+    try:
+        npc = load_npc(npc_id)
+    except NpcLoadError as exc:
+        logger.error("NPC file corrupt", extra={"npc_id": npc_id, "error": str(exc)})
+        await _send_error(ws, "npc_load_error", f"NPC '{npc_id}' exists but failed to load: {exc}")
+        return
     if npc is None:
         await _send_error(ws, "not_found", f"NPC '{npc_id}' not found")
         return
@@ -242,7 +247,12 @@ async def _handle_rp_turn(
         await _send_error(ws, "missing_field", "rp_turn requires 'text'")
         return
 
-    npc = load_npc(npc_id)
+    try:
+        npc = load_npc(npc_id)
+    except NpcLoadError as exc:
+        logger.error("NPC file corrupt", extra={"npc_id": npc_id, "error": str(exc)})
+        await _send_error(ws, "npc_load_error", f"NPC '{npc_id}' exists but failed to load: {exc}")
+        return
     if npc is None:
         await _send_error(ws, "not_found", f"NPC '{npc_id}' not found")
         return
