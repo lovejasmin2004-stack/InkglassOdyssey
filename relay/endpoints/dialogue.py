@@ -17,7 +17,7 @@ from relay.ai.rp_prompts import (
     build_rp_system_prompt,
 )
 from relay.auth.tokens import decode_token
-from relay.checks.resolver import resolve_check, validate_check
+from relay.checks.resolver import evaluate_passive_checks, resolve_check, validate_check
 from relay.config import settings
 from relay.persistence.pending_turns import (
     complete_turn,
@@ -250,6 +250,9 @@ async def _handle_rp_turn(
     ability_scores = character_sheet.get("ability_scores", {})
     skill_profs = character_sheet.get("skill_proficiencies", [])
     level = character_sheet.get("level", 1)
+    conditions = character_sheet.get("conditions", [])
+    scene_state = msg.get("scene_state", {})
+    environmental_effects = scene_state.get("environmental_effects", [])
 
     # === Persist pending turn before any processing (Invariant #12) ===
     turn_id = ""
@@ -306,7 +309,11 @@ async def _handle_rp_turn(
         check_results = []
 
         for vc in validated_checks:
-            result = resolve_check(vc, ability_scores, skill_profs, level)
+            result = resolve_check(
+                vc, ability_scores, skill_profs, level,
+                conditions=conditions,
+                environmental_effects=environmental_effects,
+            )
             check_results.append(result)
             await ws.send_json({
                 "type": "check_result",
@@ -314,10 +321,27 @@ async def _handle_rp_turn(
                 "skill": result["skill"],
                 "dc": result["dc"],
                 "roll": result["roll"],
+                "dice": result["dice"],
+                "roll_mode": result["roll_mode"],
                 "modifier": result["modifier"],
                 "total": result["total"],
                 "passed": result["passed"],
                 "reason": result["reason"],
+            })
+
+        # === Evaluate passive checks (Invariant #22) ===
+        passive_hints = evaluate_passive_checks(
+            ability_scores, skill_profs, level, scene_state,
+            conditions=conditions,
+        )
+        for hint in passive_hints:
+            await ws.send_json({
+                "type": "passive_check",
+                "turn_id": ws_turn_id,
+                "skill": hint["skill"],
+                "dc": hint["dc"],
+                "passive_value": hint["passive_value"],
+                "element_id": hint["element_id"],
             })
 
         # === Send animation directives ===

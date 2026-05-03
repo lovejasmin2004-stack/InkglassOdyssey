@@ -67,9 +67,11 @@ ANALYSIS_INSTRUCTION = """Analyse the player's prose and return a JSON object wi
 {
   "checks": [
     {
-      "skill": "<skill_id — e.g. perception, stealth, persuasion, medicine, athletics>",
+      "skill": "<skill_id -- e.g. perception, stealth, persuasion, medicine, athletics>",
       "dc": <integer 5-30>,
-      "reason": "<one sentence: what the player is attempting>"
+      "reason": "<one sentence: what the player is attempting>",
+      "advantage": <true if circumstances give the player an edge -- e.g. attacking from stealth, having prepared tools, surprise>,
+      "disadvantage": <true if circumstances hinder the player -- e.g. darkness, distraction, injury>
     }
   ],
   "scene_changes": {
@@ -82,7 +84,7 @@ ANALYSIS_INSTRUCTION = """Analyse the player's prose and return a JSON object wi
       "directive": "<e.g. lean_forward_examine, slow_set_down_object, idle_occupied>"
     }
   ],
-  "draft_response": "<your in-character prose response, written as if no checks exist — the final version will incorporate check results>"
+  "draft_response": "<your in-character prose response, written as if no checks exist -- the final version will incorporate check results>"
 }
 
 RULES FOR ANALYSIS:
@@ -90,8 +92,11 @@ RULES FOR ANALYSIS:
 - If no check is warranted, return an empty "checks" array.
 - DC range: 5 (trivial) to 30 (nearly impossible). Most checks fall between 10-20.
 - Use standard skill names: athletics, acrobatics, stealth, arcana, history, investigation, nature, religion, medicine, perception, insight, intimidation, persuasion, deception, performance, survival.
+- Set "advantage" to true when the prose describes a circumstantial edge (ambush, prepared tools, stealth approach, element of surprise, favorable position). Default false.
+- Set "disadvantage" to true when the prose describes a hindrance (darkness, distraction, fear, unfamiliar terrain). Default false.
+- Do NOT set both advantage and disadvantage on the same check -- if both apply, omit both (they cancel).
 - animation_directives must use IDs from the NPC's animation_profile or generic verbs.
-- draft_response is full prose — it will be refined in the second call with check results.
+- draft_response is full prose -- it will be refined in the second call with check results.
 """
 
 
@@ -116,11 +121,16 @@ def build_final_prose_messages(
 ) -> list[dict[str, str]]:
     """Build the message list for the second LLM call (final prose with check results)."""
     if check_results:
-        results_text = "\n".join(
-            f"- {cr['skill']} check (DC {cr['dc']}): {'PASSED' if cr['passed'] else 'FAILED'} "
-            f"(rolled {cr['roll']} + {cr['modifier']} = {cr['total']})"
-            for cr in check_results
-        )
+        def _format_check(cr: dict) -> str:
+            mode = cr.get("roll_mode", "straight")
+            mode_label = f" with {mode}" if mode != "straight" else ""
+            return (
+                f"- {cr['skill']} check (DC {cr['dc']}): "
+                f"{'PASSED' if cr['passed'] else 'FAILED'}{mode_label} "
+                f"(rolled {cr['roll']} + {cr['modifier']} = {cr['total']})"
+            )
+
+        results_text = "\n".join(_format_check(cr) for cr in check_results)
         instruction = f"""The player wrote:
 {player_prose}
 
