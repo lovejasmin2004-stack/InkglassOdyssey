@@ -93,3 +93,26 @@ class GameSession(Base):
 
     account: Mapped[Account] = relationship("Account", back_populates="sessions")
     character: Mapped[Character] = relationship("Character", back_populates="sessions")
+    scenes: Mapped[list[Scene]] = relationship("Scene", back_populates="session")
+
+
+class Scene(Base):
+    """A scene within a game session. Tracks NPC, dialogue history, and state."""
+
+    __tablename__ = "scenes"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String, ForeignKey("sessions.id"), nullable=False, index=True)
+    npc_id: Mapped[str] = mapped_column(String, nullable=False)
+    mode: Mapped[str] = mapped_column(String, nullable=False, default="rp")  # rp | quickchat
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active")  # active | ended
+    scene_state: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    turn_history: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    turn_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    scene_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    analytics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    session: Mapped[GameSession] = relationship("GameSession", back_populates="scenes")

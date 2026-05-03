@@ -16,6 +16,7 @@ from relay.auth.tokens import AccountTokenPayload, SessionTokenPayload
 from relay.config import settings
 from relay.endpoints.character import router as character_router
 from relay.endpoints.dialogue import router as dialogue_router
+from relay.endpoints.session import router as session_router
 from relay.logging_config import setup_logging
 
 setup_logging(level=settings.log_level)
@@ -49,6 +50,7 @@ app.add_middleware(BaseHTTPMiddleware, dispatch=auth_middleware)
 
 app.include_router(character_router)
 app.include_router(dialogue_router)
+app.include_router(session_router)
 
 
 @app.exception_handler(StarletteHTTPException)
