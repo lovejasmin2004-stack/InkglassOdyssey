@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
@@ -153,3 +153,41 @@ class PendingTurn(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 
     scene: Mapped[Scene] = relationship("Scene", back_populates="pending_turns")
+
+
+class TransactionLog(Base):
+    """Immutable log of economy transactions (Invariant #14).
+
+    Every wallet change — buy, sell, quest reward, admin grant — gets a row.
+    """
+
+    __tablename__ = "transaction_log"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    player_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id"), nullable=False, index=True)
+    character_id: Mapped[str] = mapped_column(String, ForeignKey("characters.id"), nullable=False, index=True)
+    world_id: Mapped[str] = mapped_column(String, nullable=False)
+
+    # buy | sell | grant | quest_reward | gather | craft
+    tx_type: Mapped[str] = mapped_column(String, nullable=False)
+
+    # Positive = credit, negative = debit (always from the player's perspective)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String, nullable=False)
+    balance_after: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Optional references
+    item_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    item_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    npc_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Pricing metadata (for audit)
+    base_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    markup_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    faction_modifier: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sell_back_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)

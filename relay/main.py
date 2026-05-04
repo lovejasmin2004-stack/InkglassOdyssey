@@ -19,6 +19,8 @@ from relay.endpoints.character import router as character_router
 from relay.endpoints.dialogue import router as dialogue_router
 from relay.endpoints.scene import router as scene_router
 from relay.endpoints.session import router as session_router
+from relay.endpoints.shop import router as shop_router
+from relay.endpoints.wallet import router as wallet_router
 from relay.logging_config import setup_logging
 
 setup_logging(level=settings.log_level)
@@ -55,6 +57,8 @@ app.include_router(character_router)
 app.include_router(dialogue_router)
 app.include_router(scene_router)
 app.include_router(session_router)
+app.include_router(shop_router)
+app.include_router(wallet_router)
 
 
 @app.exception_handler(StarletteHTTPException)
