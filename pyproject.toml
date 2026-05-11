@@ -29,6 +29,7 @@ select = [
 ignore = [
     "E501",  # line length handled by formatter
     "B008",  # function call in default arg (FastAPI Depends pattern)
+    "SIM117",  # nested with -- often needed when inner context uses outer variable
 ]
 
 [tool.ruff.lint.isort]

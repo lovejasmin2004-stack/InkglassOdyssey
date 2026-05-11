@@ -5,11 +5,12 @@ keyed by currency ID (typically the world_id, e.g. ``inkglass_dark``).
 All mutations go through this module to enforce Invariant #14
 (all economy transactions through relay endpoints).
 """
+
 from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,9 +26,7 @@ class InsufficientFunds(Exception):
         self.currency = currency
         self.balance = balance
         self.amount = amount
-        super().__init__(
-            f"Insufficient {currency}: have {balance}, need {amount}"
-        )
+        super().__init__(f"Insufficient {currency}: have {balance}, need {amount}")
 
 
 async def get_balance(character: Character, currency: str) -> int:
@@ -65,7 +64,7 @@ async def credit(
     new_balance = old_balance + amount
     wallet[currency] = new_balance
     character.wallet = wallet
-    character.updated_at = datetime.now(timezone.utc)
+    character.updated_at = datetime.now(UTC)
 
     tx = TransactionLog(
         id=f"tx_{uuid.uuid4().hex[:12]}",
@@ -85,7 +84,7 @@ async def credit(
         faction_modifier=faction_modifier,
         sell_back_ratio=sell_back_ratio,
         note=note,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     db.add(tx)
 
@@ -135,7 +134,7 @@ async def debit(
     new_balance = old_balance - amount
     wallet[currency] = new_balance
     character.wallet = wallet
-    character.updated_at = datetime.now(timezone.utc)
+    character.updated_at = datetime.now(UTC)
 
     tx = TransactionLog(
         id=f"tx_{uuid.uuid4().hex[:12]}",
@@ -155,7 +154,7 @@ async def debit(
         faction_modifier=faction_modifier,
         sell_back_ratio=sell_back_ratio,
         note=note,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     db.add(tx)
 
@@ -170,3 +169,76 @@ async def debit(
         },
     )
     return new_balance
+
+
+def log_item_transaction(
+    db: AsyncSession,
+    character: Character,
+    *,
+    tx_type: str,
+    item_id: str,
+    item_quantity: int,
+    currency: str,
+    session_id: str | None = None,
+    note: str | None = None,
+) -> None:
+    """Write a TransactionLog entry for a non-currency item event.
+
+    Used by craft/gather/craft_fail — events that affect inventory but not
+    the wallet balance.  Centralises TransactionLog construction so callers
+    don't duplicate the boilerplate.
+    """
+    tx = TransactionLog(
+        id=f"tx_{uuid.uuid4().hex[:12]}",
+        player_id=character.player_id,
+        character_id=character.id,
+        world_id=character.world_id,
+        tx_type=tx_type,
+        amount=0,
+        currency=currency,
+        balance_after=0,
+        item_id=item_id,
+        item_quantity=item_quantity,
+        session_id=session_id,
+        note=note,
+        created_at=datetime.now(UTC),
+    )
+    db.add(tx)
+    logger.info(
+        "Item transaction logged",
+        extra={
+            "character_id": character.id,
+            "tx_type": tx_type,
+            "item_id": item_id,
+            "item_quantity": item_quantity,
+        },
+    )
+
+
+async def quest_reward(
+    db: AsyncSession,
+    character: Character,
+    *,
+    currency: str,
+    amount: int,
+    quest_id: str | None = None,
+    session_id: str | None = None,
+    note: str | None = None,
+) -> int:
+    """Credit a quest reward to a character's wallet.
+
+    Thin wrapper around :func:`credit` that sets ``tx_type="quest_reward"``
+    and tags the quest_id in the transaction note for audit.
+
+    Returns the new balance.
+    """
+    reward_note = note or f"Quest reward{f': {quest_id}' if quest_id else ''}"
+    return await credit(
+        db,
+        character,
+        currency=currency,
+        amount=amount,
+        tx_type="quest_reward",
+        session_id=session_id,
+        note=reward_note,
+    )

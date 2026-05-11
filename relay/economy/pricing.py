@@ -9,6 +9,7 @@ Design doc: docs/economy balance.pdf
   Unfriendly -10%, Hostile → shop refuses
 - Legendary items cannot be purchased
 """
+
 from __future__ import annotations
 
 import math
@@ -17,25 +18,22 @@ import math
 # Faction standing → tier mapping (docs/faction system.pdf §Standing Tiers)
 # ---------------------------------------------------------------------------
 
-_STANDING_TIERS: list[tuple[int, str]] = [
-    (-100, "hostile"),
-    (-50, "unfriendly"),
-    (0, "neutral"),
-    (50, "friendly"),
-    (100, "allied"),
-]
-
 
 def faction_tier(standing: int) -> str:
-    """Map a numeric faction standing (-100..100) to a named tier."""
+    """Map a numeric faction standing (-100..100) to a named tier.
+
+    Thresholds from docs/faction system.pdf:
+      hostile: -100 to -51, unfriendly: -50 to -1, neutral: 0,
+      friendly: 1 to 50, allied: 51 to 100.
+    """
     standing = max(-100, min(100, standing))
-    if standing >= 50:
+    if standing >= 51:
         return "allied"
-    if standing >= 20:
+    if standing >= 1:
         return "friendly"
-    if standing >= -19:
+    if standing == 0:
         return "neutral"
-    if standing >= -49:
+    if standing >= -50:
         return "unfriendly"
     return "hostile"
 
@@ -49,12 +47,13 @@ _FACTION_SELL_MODIFIER: dict[str, float] = {
     "hostile": 0.0,  # shop refuses entirely — handled at call site
 }
 
-# Faction tier → buy price multiplier (markup adjustment)
+# Faction tier → buy price multiplier
+# hostile +25% from doc but shop refuses; unfriendly +25%; friendly -10%; allied -20%
 _FACTION_BUY_MODIFIER: dict[str, float] = {
-    "allied": -0.10,
-    "friendly": -0.05,
+    "allied": -0.20,
+    "friendly": -0.10,
     "neutral": 0.0,
-    "unfriendly": 0.10,
+    "unfriendly": 0.25,
     "hostile": 0.0,  # shop refuses
 }
 

@@ -2,6 +2,7 @@
 
 Invariant #14: all economy transactions through relay endpoints.
 """
+
 from __future__ import annotations
 
 import logging
@@ -29,6 +30,7 @@ DB = Annotated[AsyncSession, Depends(get_db)]
 # ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
+
 
 class WalletResponse(BaseModel):
     character_id: str
@@ -76,6 +78,7 @@ class TransactionHistoryResponse(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 async def _get_character(db: AsyncSession, character_id: str, player_id: str) -> Character:
     result = await db.execute(select(Character).where(Character.id == character_id))
     character = result.scalar_one_or_none()
@@ -96,6 +99,7 @@ async def _get_character(db: AsyncSession, character_id: str, player_id: str) ->
 # Endpoints
 # ---------------------------------------------------------------------------
 
+
 @router.get("/{character_id}", response_model=WalletResponse)
 async def get_wallet(character_id: str, token: Token, db: DB) -> WalletResponse:
     """Get the wallet balances for a character."""
@@ -109,11 +113,19 @@ async def get_wallet(character_id: str, token: Token, db: DB) -> WalletResponse:
 
 @router.post("/grant", status_code=status.HTTP_200_OK, response_model=GrantResponse)
 async def grant_currency(body: GrantRequest, token: Token, db: DB) -> GrantResponse:
-    """Grant currency to a character (admin/quest reward operation)."""
+    """Grant currency to a character (admin/quest reward operation).
+
+    TODO(Phase 1): Add role-based access control.  Currently, the ownership
+    check restricts grants to the character's own player.  DM (role="dm") and
+    admin tokens should bypass ownership so they can grant rewards to other
+    players' characters.  Until then, DM grants require the player to
+    self-grant through their own session token.
+    """
     character = await _get_character(db, body.character_id, token.player_id)
 
     new_balance = await credit(
-        db, character,
+        db,
+        character,
         currency=body.currency,
         amount=body.amount,
         tx_type="grant",

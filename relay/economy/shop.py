@@ -7,6 +7,7 @@ against the character's wallet and inventory.
 Invariant #14: all economy transactions through relay endpoints.
 Invariant #8: LLM is never authoritative over mechanical state.
 """
+
 from __future__ import annotations
 
 import logging
@@ -21,7 +22,7 @@ from relay.economy.pricing import (
     faction_tier,
     is_hostile,
 )
-from relay.economy.wallet import InsufficientFunds, credit, debit
+from relay.economy.wallet import credit, debit
 from relay.models import Character
 from relay.schemas import Item, NpcPersonality, ShopInventoryEntry
 
@@ -54,6 +55,32 @@ class ItemNotInInventory(ShopError):
 
 class BoundItemCannotSell(ShopError):
     """Bound items cannot be sold."""
+
+
+# ---------------------------------------------------------------------------
+# World → currency mapping
+# ---------------------------------------------------------------------------
+
+# Each world has its own currency name for display purposes.
+# Keys are world_ids, values are canonical currency names.
+_WORLD_CURRENCIES: dict[str, str] = {
+    "inkglass_dark": "gold",
+    "murim": "silver_taels",
+    "cybernightlife": "credits",
+    "wha_au": "sintar",
+    "atla_au": "yuan",
+    "gachiakuta_au": "scrip",
+    "hxh_au": "jenny",
+}
+
+
+def get_world_currency(world_id: str) -> str:
+    """Return the canonical currency key for a world.
+
+    Falls back to the world_id itself if no mapping is defined, ensuring
+    forward-compatibility with new worlds.
+    """
+    return _WORLD_CURRENCIES.get(world_id, world_id)
 
 
 @dataclass
@@ -124,16 +151,18 @@ def get_shop_prices(
             faction_standing=standing,
         )
 
-        quotes.append(PriceQuote(
-            item_id=item.id,
-            item_name=item.name,
-            base_value=item.value,
-            markup_pct=entry.markup_percentage,
-            buy_price=buy_price,
-            sell_price=sell_price,
-            stock=entry.stock_quantity,
-            faction_tier=tier,
-        ))
+        quotes.append(
+            PriceQuote(
+                item_id=item.id,
+                item_name=item.name,
+                base_value=item.value,
+                markup_pct=entry.markup_percentage,
+                buy_price=buy_price,
+                sell_price=sell_price,
+                stock=entry.stock_quantity,
+                faction_tier=tier,
+            )
+        )
 
     return quotes
 
@@ -196,10 +225,11 @@ async def buy_item(
     )
     total_price = unit_price * quantity
 
-    # Debit wallet
-    currency = character.world_id
+    # Debit wallet (#7 — world-named currency)
+    currency = get_world_currency(character.world_id)
     new_balance = await debit(
-        db, character,
+        db,
+        character,
         currency=currency,
         amount=total_price,
         tx_type="buy",
@@ -283,11 +313,13 @@ async def sell_item(
     inventory = list(character.inventory or [])
     inv_entry = _find_inventory_entry(inventory, item.id)
     if inv_entry is None or inv_entry.get("quantity", 0) < quantity:
-        raise ItemNotInInventory(
-            f"Character does not have {quantity}x '{item.id}'"
-        )
+        raise ItemNotInInventory(f"Character does not have {quantity}x '{item.id}'")
 
     # Check binding
+    # TODO(Phase 2): When equip endpoints are implemented, bind_on_equip items
+    # must have their binding_state set to "bound" at equip time.  The check
+    # below already handles that case correctly — as long as the equip logic
+    # writes binding_state="bound", this guard will block selling.
     if inv_entry.get("binding_state") == "bound":
         raise BoundItemCannotSell(f"Item '{item.id}' is bound and cannot be sold")
 
@@ -300,10 +332,11 @@ async def sell_item(
     )
     total_price = unit_price * quantity
 
-    # Credit wallet
-    currency = character.world_id
+    # Credit wallet (#7 — world-named currency)
+    currency = get_world_currency(character.world_id)
     new_balance = await credit(
-        db, character,
+        db,
+        character,
         currency=currency,
         amount=total_price,
         tx_type="sell",
@@ -349,12 +382,18 @@ async def sell_item(
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _npc_faction_id(npc: NpcPersonality) -> str | None:
     """Derive the faction ID for an NPC.
 
-    Convention: the NPC's world_position.region_id is used as a faction key.
-    If the NPC has no world_position, returns None (neutral pricing).
+    Checks for an explicit ``faction_id`` on the NPC first (from npc_personality
+    schema).  Falls back to ``world_position.region_id`` as a convention.
+    Returns None (neutral pricing) if neither is available.
     """
+    # Prefer explicit faction_id if present (#8)
+    explicit = getattr(npc, "faction_id", None)
+    if explicit:
+        return explicit
     if npc.world_position:
         return npc.world_position.region_id
     return None
@@ -370,17 +409,24 @@ def _find_shop_entry(npc: NpcPersonality, item_id: str) -> ShopInventoryEntry | 
 
 
 def _add_to_inventory(inventory: list[dict], item: Item, quantity: int) -> None:
-    """Add an item to the inventory list, stacking if possible."""
+    """Add an item to the inventory list, stacking if binding state matches.
+
+    (#4) Stacking now matches on both item_id *and* binding_state to prevent
+    merging unbound purchases into an existing bound stack (or vice versa).
+    """
+    new_binding = "bound" if item.binding == "bind_on_acquire" else "unbound"
     for entry in inventory:
-        if entry.get("item_id") == item.id:
+        if entry.get("item_id") == item.id and entry.get("binding_state") == new_binding:
             entry["quantity"] = entry.get("quantity", 1) + quantity
             return
 
-    inventory.append({
-        "item_id": item.id,
-        "quantity": quantity,
-        "binding_state": "bound" if item.binding == "bind_on_acquire" else "unbound",
-    })
+    inventory.append(
+        {
+            "item_id": item.id,
+            "quantity": quantity,
+            "binding_state": new_binding,
+        }
+    )
 
 
 def _find_inventory_entry(inventory: list[dict], item_id: str) -> dict | None:

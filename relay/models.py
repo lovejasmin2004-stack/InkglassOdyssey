@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -8,7 +8,7 @@ from sqlalchemy.types import JSON
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Base(DeclarativeBase):
@@ -52,6 +52,7 @@ class Character(Base):
     passive_checks: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     conditions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     exhaustion_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    death_state_exhaustion_gained: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     # Resources and economy
     resources: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
@@ -82,8 +83,8 @@ class GameSession(Base):
     player_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id"), nullable=False, index=True)
     character_id: Mapped[str] = mapped_column(String, ForeignKey("characters.id"), nullable=False, index=True)
     world_id: Mapped[str] = mapped_column(String, nullable=False)
-    mode: Mapped[str] = mapped_column(String, nullable=False, default="solo")   # solo | multiplayer
-    role: Mapped[str] = mapped_column(String, nullable=False, default="player") # player | dm
+    mode: Mapped[str] = mapped_column(String, nullable=False, default="solo")  # solo | multiplayer
+    role: Mapped[str] = mapped_column(String, nullable=False, default="player")  # player | dm
     status: Mapped[str] = mapped_column(String, nullable=False, default="active")  # active | ended
     session_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     analytics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -113,6 +114,7 @@ class Scene(Base):
     analytics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     session: Mapped[GameSession] = relationship("GameSession", back_populates="scenes")
@@ -148,6 +150,10 @@ class PendingTurn(Base):
     final_response: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Retry tracking (#4): links retries to original turn, caps at MAX_RETRIES
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    parent_turn_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)

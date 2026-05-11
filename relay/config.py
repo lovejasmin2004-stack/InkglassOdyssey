@@ -1,29 +1,35 @@
 from __future__ import annotations
 
-import os
+from typing import Literal
 
-from dotenv import load_dotenv
-
-load_dotenv(override=True)
-
-
-def _require_env(key: str) -> str:
-    value = os.environ.get(key)
-    if not value:
-        raise RuntimeError(
-            f"Required environment variable {key} is not set. "
-            f"Check your .env file or environment."
-        )
-    return value
+from pydantic import Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings:
-    anthropic_api_key: str = _require_env("ANTHROPIC_API_KEY")
-    jwt_secret: str = _require_env("INKGLASS_JWT_SECRET")
-    database_url: str = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./inkglass.db")
-    admin_mode: bool = os.environ.get("ADMIN_MODE", "false").lower() == "true"
-    environment: str = os.environ.get("ENVIRONMENT", "development")
-    log_level: str = os.environ.get("LOG_LEVEL", "INFO")
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
+    jwt_secret: str = Field(default="", alias="INKGLASS_JWT_SECRET")
+    database_url: str = Field(default="sqlite+aiosqlite:///./inkglass.db", alias="DATABASE_URL")
+    admin_mode: bool = Field(default=False, alias="ADMIN_MODE")
+    environment: Literal["development", "staging", "production"] = Field(default="development", alias="ENVIRONMENT")
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(default="INFO", alias="LOG_LEVEL")
+
+    @model_validator(mode="after")
+    def _check_required_secrets(self) -> Settings:
+        missing = []
+        if not self.anthropic_api_key:
+            missing.append("ANTHROPIC_API_KEY")
+        if not self.jwt_secret:
+            missing.append("INKGLASS_JWT_SECRET")
+        if missing and self.environment == "production":
+            raise ValueError(f"Required environment variables not set: {', '.join(missing)}")
+        return self
 
 
 settings = Settings()

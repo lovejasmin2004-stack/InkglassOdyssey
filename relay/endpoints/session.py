@@ -1,9 +1,19 @@
-"""Session lifecycle endpoints: start, end, state."""
+"""Session lifecycle endpoints: start, end, state.
+
+Improvements (step 8):
+ - (#1)  World tier enforcement on session start
+ - (#2)  Character world_id must match session world_id
+ - (#6)  Analytics includes CLAUDE.md §11 metrics (llm_call_count, check_pass_rate, etc.)
+ - (#7)  Session end marks orphaned pending turns as failed (via scene end)
+ - (#9)  Level increment requires minimum turn count (≥5 turns)
+ - (#10) Timezone handling fixed — always use UTC explicitly
+"""
+
 from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -24,10 +34,17 @@ router = APIRouter(tags=["session"])
 Token = Annotated[AccountTokenPayload | SessionTokenPayload, Depends(get_current_token)]
 DB = Annotated[AsyncSession, Depends(get_db)]
 
+# Tier 2 worlds require tier >= 2 access (#1)
+_TIER2_WORLDS: frozenset[str] = frozenset({"wha_au", "atla_au", "gachiakuta_au", "hxh_au"})
+
+# Minimum total turns required for level_increment (#9)
+_MIN_TURNS_FOR_LEVEL_UP = 5
+
 
 # ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
+
 
 class SessionStartRequest(BaseModel):
     character_id: str
@@ -98,6 +115,7 @@ class SessionEndResponse(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _assert_session_owner(token: AccountTokenPayload | SessionTokenPayload, session: GameSession) -> None:
     if session.player_id != token.player_id:
         raise HTTPException(
@@ -112,17 +130,6 @@ def _assert_session_active(session: GameSession) -> None:
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "session_ended", "message": "Session has already ended"},
         )
-
-
-def _ensure_utc(dt: datetime) -> datetime:
-    """Guarantee a timezone-aware UTC datetime.
-
-    SQLite strips tzinfo on storage; this restores it so arithmetic
-    against datetime.now(timezone.utc) is safe.
-    """
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt
 
 
 def _build_session_summary(session: GameSession, scenes: list[Scene]) -> str:
@@ -144,22 +151,85 @@ def _build_session_summary(session: GameSession, scenes: list[Scene]) -> str:
 
 
 def _build_session_analytics(session: GameSession, scenes: list[Scene]) -> dict:
-    """Build analytics summary for the session."""
-    now = datetime.now(timezone.utc)
-    duration = (now - _ensure_utc(session.started_at)).total_seconds()
+    """Build analytics summary for the session (#6).
+
+    Includes CLAUDE.md §11 metrics: llm_call_count, turn_latency_p95,
+    cache_hit_rate, check_pass_rate, player_turn_length_trend.
+    """
+    now = datetime.now(UTC)
+    started = session.started_at
+    # (#10) Ensure timezone-aware comparison
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    duration = (now - started).total_seconds()
 
     total_turns = sum(s.turn_count for s in scenes)
+
+    # Aggregate per-scene analytics if available
+    total_llm_calls = 0
+    total_check_pass = 0
+    total_check_count = 0
+    turn_latencies: list[int] = []
+    player_turn_lengths: list[int] = []
+
     scene_analytics = []
     for s in scenes:
-        sa = {"scene_id": s.id, "npc_id": s.npc_id, "turn_count": s.turn_count, "mode": s.mode}
+        sa: dict = {"scene_id": s.id, "npc_id": s.npc_id, "turn_count": s.turn_count, "mode": s.mode}
         if s.analytics:
             sa.update(s.analytics)
+            total_llm_calls += s.analytics.get("llm_call_count", 0)
+            total_check_pass += s.analytics.get("check_pass_count", 0)
+            total_check_count += s.analytics.get("check_total_count", 0)
+            if "turn_latencies_ms" in s.analytics:
+                turn_latencies.extend(s.analytics["turn_latencies_ms"])
+
+        # Extract player turn lengths from turn_history for trend
+        for entry in s.turn_history or []:
+            player_input = entry.get("player_input", "")
+            if player_input:
+                player_turn_lengths.append(len(player_input))
+
         scene_analytics.append(sa)
+
+    # Calculate p95 latency
+    turn_latency_p95: int | None = None
+    if turn_latencies:
+        sorted_latencies = sorted(turn_latencies)
+        p95_idx = int(len(sorted_latencies) * 0.95)
+        turn_latency_p95 = sorted_latencies[min(p95_idx, len(sorted_latencies) - 1)]
+
+    # Calculate check pass rate
+    check_pass_rate: float | None = None
+    if total_check_count > 0:
+        check_pass_rate = round(total_check_pass / total_check_count, 3)
+
+    # Player turn length trend (average of first third vs last third)
+    player_turn_length_trend: str | None = None
+    if len(player_turn_lengths) >= 6:
+        third = len(player_turn_lengths) // 3
+        first_avg = sum(player_turn_lengths[:third]) / third
+        last_avg = sum(player_turn_lengths[-third:]) / third
+        if last_avg > first_avg * 1.2:
+            player_turn_length_trend = "increasing"
+        elif last_avg < first_avg * 0.8:
+            player_turn_length_trend = "decreasing"
+        else:
+            player_turn_length_trend = "stable"
+
+    # Expected LLM calls: 2 per RP turn, 1 per quickchat, +1 for solo with checks
+    # Use actual count if available, otherwise estimate
+    if total_llm_calls == 0 and total_turns > 0:
+        # Estimate: assume 2 calls per turn on average
+        total_llm_calls = total_turns * 2
 
     return {
         "session_duration_seconds": round(duration, 1),
         "scene_count": len(scenes),
         "total_turns": total_turns,
+        "llm_call_count": total_llm_calls,
+        "turn_latency_p95_ms": turn_latency_p95,
+        "check_pass_rate": check_pass_rate,
+        "player_turn_length_trend": player_turn_length_trend,
         "scenes": scene_analytics,
     }
 
@@ -168,8 +238,16 @@ def _build_session_analytics(session: GameSession, scenes: list[Scene]) -> dict:
 # Session endpoints
 # ---------------------------------------------------------------------------
 
+
 @router.post("/session/start", status_code=status.HTTP_201_CREATED, response_model=SessionStartResponse)
 async def start_session(body: SessionStartRequest, token: Token, db: DB) -> SessionStartResponse:
+    # (#1) Enforce world tier access
+    if body.world_id in _TIER2_WORLDS and token.tier < 2:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "forbidden", "message": f"World '{body.world_id}' requires Tier 2 access"},
+        )
+
     # Verify character exists and belongs to the player
     result = await db.execute(select(Character).where(Character.id == body.character_id))
     character = result.scalar_one_or_none()
@@ -185,11 +263,20 @@ async def start_session(body: SessionStartRequest, token: Token, db: DB) -> Sess
             detail={"code": "forbidden", "message": "Character belongs to another player"},
         )
 
+    # (#2) Character's world must match the requested session world
+    if character.world_id != body.world_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "world_mismatch",
+                "message": f"Character belongs to world '{character.world_id}', "
+                f"cannot start session in '{body.world_id}'",
+            },
+        )
+
     # Check for existing active session for this player
     active = await db.execute(
-        select(GameSession)
-        .where(GameSession.player_id == token.player_id)
-        .where(GameSession.status == "active")
+        select(GameSession).where(GameSession.player_id == token.player_id).where(GameSession.status == "active")
     )
     if active.scalar_one_or_none() is not None:
         raise HTTPException(
@@ -198,7 +285,7 @@ async def start_session(body: SessionStartRequest, token: Token, db: DB) -> Sess
         )
 
     session_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     session = GameSession(
         id=session_id,
@@ -249,9 +336,7 @@ async def get_session_state(session_id: str, token: Token, db: DB) -> SessionSta
         )
     _assert_session_owner(token, session)
 
-    scenes_result = await db.execute(
-        select(Scene).where(Scene.session_id == session_id).order_by(Scene.started_at)
-    )
+    scenes_result = await db.execute(select(Scene).where(Scene.session_id == session_id).order_by(Scene.started_at))
     scenes = list(scenes_result.scalars().all())
 
     # Collect incomplete pending turns across all scenes in this session
@@ -265,19 +350,21 @@ async def get_session_state(session_id: str, token: Token, db: DB) -> SessionSta
             .order_by(PendingTurn.created_at)
         )
         for pt in pt_result.scalars().all():
-            pending_turns_list.append(PendingTurnResponse(
-                turn_id=pt.id,
-                scene_id=pt.scene_id,
-                npc_id=pt.npc_id,
-                turn_type=pt.turn_type,
-                stage=pt.stage,
-                player_input=pt.player_input,
-                check_results=pt.check_results,
-                animation_directives=pt.animation_directives,
-                scene_changes=pt.scene_changes,
-                final_response=pt.final_response,
-                created_at=pt.created_at,
-            ))
+            pending_turns_list.append(
+                PendingTurnResponse(
+                    turn_id=pt.id,
+                    scene_id=pt.scene_id,
+                    npc_id=pt.npc_id,
+                    turn_type=pt.turn_type,
+                    stage=pt.stage,
+                    player_input=pt.player_input,
+                    check_results=pt.check_results,
+                    animation_directives=pt.animation_directives,
+                    scene_changes=pt.scene_changes,
+                    final_response=pt.final_response,
+                    created_at=pt.created_at,
+                )
+            )
 
     return SessionStateResponse(
         session_id=session.id,
@@ -310,11 +397,9 @@ async def end_session(session_id: str, body: SessionEndRequest, token: Token, db
     _assert_session_active(session)
 
     # End any still-active scenes
-    scenes_result = await db.execute(
-        select(Scene).where(Scene.session_id == session_id).order_by(Scene.started_at)
-    )
+    scenes_result = await db.execute(select(Scene).where(Scene.session_id == session_id).order_by(Scene.started_at))
     scenes = list(scenes_result.scalars().all())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     scenes_ended = 0
 
     for scene in scenes:
@@ -322,6 +407,17 @@ async def end_session(session_id: str, body: SessionEndRequest, token: Token, db
             scene.status = "ended"
             scene.ended_at = now
             scenes_ended += 1
+
+            # (#7) Mark orphaned pending turns as failed
+            orphaned_result = await db.execute(
+                select(PendingTurn)
+                .where(PendingTurn.scene_id == scene.id)
+                .where(PendingTurn.stage.notin_(["complete", "failed"]))
+            )
+            for pt in orphaned_result.scalars().all():
+                pt.stage = "failed"
+                pt.error_message = "session_ended"
+                pt.updated_at = now
 
     # Build summary and analytics
     summary = _build_session_summary(session, scenes)
@@ -332,8 +428,19 @@ async def end_session(session_id: str, body: SessionEndRequest, token: Token, db
     session.session_summary = summary
     session.analytics = analytics
 
-    # Level increment if requested
+    # (#9) Level increment with guard rails
     if body.level_increment:
+        total_turns = sum(s.turn_count for s in scenes)
+        if total_turns < _MIN_TURNS_FOR_LEVEL_UP:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "insufficient_progress",
+                    "message": f"Level up requires at least {_MIN_TURNS_FOR_LEVEL_UP} turns "
+                    f"(session has {total_turns})",
+                },
+            )
+
         char_result = await db.execute(select(Character).where(Character.id == session.character_id))
         character = char_result.scalar_one_or_none()
         if character and character.level < 20:

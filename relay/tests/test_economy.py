@@ -3,29 +3,21 @@
 Covers the full buy→sell round-trip with faction price modifiers and
 verifies wallet changes match expected values from the design doc.
 """
+
 from __future__ import annotations
 
-import math
 from unittest.mock import patch
 
 import pytest
 
-from relay.auth.tokens import create_account_token
+from relay.auth.tokens import create_account_token, create_session_token
 from relay.economy.pricing import (
-    _DEFAULT_SELL_BACK_RATIO,
     compute_buy_price,
     compute_sell_price,
     faction_tier,
     is_hostile,
 )
 from relay.economy.shop import (
-    BoundItemCannotSell,
-    HostileFaction,
-    ItemNotInInventory,
-    ItemNotInShop,
-    LegendaryCannotPurchase,
-    OutOfStock,
-    PriceQuote,
     get_shop_prices,
 )
 from relay.schemas import (
@@ -43,14 +35,28 @@ from relay.schemas import (
     WorldPosition,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def auth_header():
     token = create_account_token(player_id="player_001", tier=1)
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture()
+def session_header():
+    """Session token for endpoints that require require_session_token."""
+    token = create_session_token(
+        player_id="player_001",
+        world_id="inkglass_dark",
+        session_id="sess_econ_001",
+        tier=1,
+        role="player",
+        mode="solo",
+    )
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -64,8 +70,12 @@ def character_id(db_client, auth_header):
             "name": "Kael",
             "specialisation_path_id": "scout",
             "ability_scores": {
-                "strength": 10, "dexterity": 14, "constitution": 12,
-                "intelligence": 12, "wisdom": 14, "charisma": 10,
+                "strength": 10,
+                "dexterity": 14,
+                "constitution": 12,
+                "intelligence": 12,
+                "wisdom": 14,
+                "charisma": 10,
             },
             "skill_proficiencies": ["stealth", "perception"],
             "saving_throw_proficiencies": ["dexterity", "wisdom"],
@@ -78,12 +88,16 @@ def character_id(db_client, auth_header):
 
 @pytest.fixture()
 def funded_character_id(db_client, auth_header, character_id):
-    """Grant 500 gold to the test character."""
+    """Grant 500 gold to the test character.
+
+    Uses the world-named currency ("gold" for inkglass_dark) to match
+    the shop buy/sell logic which calls ``get_world_currency``.
+    """
     resp = db_client.post(
         "/wallet/grant",
         json={
             "character_id": character_id,
-            "currency": "inkglass_dark",
+            "currency": "gold",
             "amount": 500,
             "note": "Test setup",
         },
@@ -122,7 +136,8 @@ def _make_shop_npc(
         communication_style="Direct, transactional.",
         power_narrative="Knows the market.",
         knowledge_boundaries=NpcKnowledgeBoundaries(
-            knows=["local prices"], does_not_know=["magic"],
+            knows=["local prices"],
+            does_not_know=["magic"],
         ),
         relationships=[
             NpcRelationship(npc_id="guard_001", relationship_type="ally", description="Pays for protection"),
@@ -143,7 +158,14 @@ def _make_shop_npc(
             emotional_state_to_animation={"happy": "nod", "angry": "frown", "sad": "sigh"},
         ),
         world_position=WorldPosition(region_id=faction_region),
-        ability_scores={"strength": 10, "dexterity": 10, "constitution": 10, "intelligence": 14, "wisdom": 12, "charisma": 14},
+        ability_scores={
+            "strength": 10,
+            "dexterity": 10,
+            "constitution": 10,
+            "intelligence": 14,
+            "wisdom": 12,
+            "charisma": 14,
+        },
         ac=10,
         saving_throw_proficiencies=["intelligence", "charisma"],
         skill_proficiencies=["persuasion", "insight"],
@@ -184,26 +206,25 @@ def _make_item(
 # Unit tests: pricing engine
 # ---------------------------------------------------------------------------
 
+
 class TestFactionTier:
     def test_allied(self):
-        assert faction_tier(50) == "allied"
+        assert faction_tier(51) == "allied"
         assert faction_tier(100) == "allied"
 
     def test_friendly(self):
-        assert faction_tier(20) == "friendly"
-        assert faction_tier(49) == "friendly"
+        assert faction_tier(1) == "friendly"
+        assert faction_tier(50) == "friendly"
 
     def test_neutral(self):
         assert faction_tier(0) == "neutral"
-        assert faction_tier(19) == "neutral"
-        assert faction_tier(-19) == "neutral"
 
     def test_unfriendly(self):
-        assert faction_tier(-20) == "unfriendly"
-        assert faction_tier(-49) == "unfriendly"
+        assert faction_tier(-1) == "unfriendly"
+        assert faction_tier(-50) == "unfriendly"
 
     def test_hostile(self):
-        assert faction_tier(-50) == "hostile"
+        assert faction_tier(-51) == "hostile"
         assert faction_tier(-100) == "hostile"
 
     def test_clamping(self):
@@ -223,22 +244,22 @@ class TestBuyPrice:
         assert price == 110
 
     def test_allied_discount(self):
-        """Allied standing gives 10% discount on buy price."""
-        # Base 100, 10% markup = 110, then allied -10% = 110 * 0.90 = 99
-        price = compute_buy_price(base_value=100, markup_pct=10.0, faction_standing=50)
-        assert price == 99
+        """Allied standing gives 20% discount on buy price."""
+        # Base 100, 10% markup = 110, then allied -20% = 110 * 0.80 = 88
+        price = compute_buy_price(base_value=100, markup_pct=10.0, faction_standing=51)
+        assert price == 88
 
     def test_friendly_discount(self):
-        """Friendly standing gives 5% discount on buy price."""
-        # Base 100, 0% markup = 100, then friendly -5% = 95
-        price = compute_buy_price(base_value=100, markup_pct=0.0, faction_standing=20)
-        assert price == 95
+        """Friendly standing gives 10% discount on buy price."""
+        # Base 100, 0% markup = 100, then friendly -10% = 90
+        price = compute_buy_price(base_value=100, markup_pct=0.0, faction_standing=25)
+        assert price == 90
 
     def test_unfriendly_surcharge(self):
-        """Unfriendly standing adds 10% surcharge."""
-        # Base 100, 0% markup = 100, then unfriendly +10% = 110
-        price = compute_buy_price(base_value=100, markup_pct=0.0, faction_standing=-20)
-        assert price == 110
+        """Unfriendly standing adds 25% surcharge."""
+        # Base 100, 0% markup = 100, then unfriendly +25% = 125
+        price = compute_buy_price(base_value=100, markup_pct=0.0, faction_standing=-25)
+        assert price == 125
 
     def test_minimum_price(self):
         """Price never drops below 1."""
@@ -248,12 +269,13 @@ class TestBuyPrice:
     def test_lookup_from_standings_dict(self):
         """Can look up faction standing from a character's dict."""
         price = compute_buy_price(
-            base_value=100, markup_pct=0.0,
+            base_value=100,
+            markup_pct=0.0,
             faction_id="market_district",
-            character_faction_standing={"market_district": 50},
+            character_faction_standing={"market_district": 51},
         )
-        # Allied: 100 * 0.90 = 90
-        assert price == 90
+        # Allied: 100 * 0.80 = 80
+        assert price == 80
 
 
 class TestSellPrice:
@@ -264,17 +286,17 @@ class TestSellPrice:
 
     def test_allied_bonus(self):
         """Allied: 50% + 10% = 60% sell-back."""
-        price = compute_sell_price(base_value=100, faction_standing=50)
+        price = compute_sell_price(base_value=100, faction_standing=51)
         assert price == 60
 
     def test_friendly_bonus(self):
         """Friendly: 50% + 5% = 55% sell-back."""
-        price = compute_sell_price(base_value=100, faction_standing=20)
+        price = compute_sell_price(base_value=100, faction_standing=25)
         assert price == 55
 
     def test_unfriendly_penalty(self):
         """Unfriendly: 50% - 10% = 40% sell-back."""
-        price = compute_sell_price(base_value=100, faction_standing=-20)
+        price = compute_sell_price(base_value=100, faction_standing=-25)
         assert price == 40
 
     def test_custom_ratio(self):
@@ -290,17 +312,18 @@ class TestSellPrice:
 
 class TestIsHostile:
     def test_hostile_true(self):
-        assert is_hostile(faction_standing=-50) is True
+        assert is_hostile(faction_standing=-51) is True
         assert is_hostile(faction_standing=-100) is True
 
     def test_not_hostile(self):
         assert is_hostile(faction_standing=0) is False
-        assert is_hostile(faction_standing=-49) is False
+        assert is_hostile(faction_standing=-50) is False
 
 
 # ---------------------------------------------------------------------------
 # Unit tests: shop price quotes
 # ---------------------------------------------------------------------------
+
 
 class TestShopPriceQuotes:
     def test_get_shop_prices_basic(self):
@@ -308,12 +331,17 @@ class TestShopPriceQuotes:
         items = {
             "iron_sword": _make_item(item_id="iron_sword", value=30),
             "health_potion": _make_item(
-                item_id="health_potion", name="Health Potion",
-                item_type="consumable", value=20,
+                item_id="health_potion",
+                name="Health Potion",
+                item_type="consumable",
+                value=20,
             ),
             "rare_amulet": _make_item(
-                item_id="rare_amulet", name="Rare Amulet",
-                item_type="armour", rarity="rare", value=2000,
+                item_id="rare_amulet",
+                name="Rare Amulet",
+                item_type="armour",
+                rarity="rare",
+                value=2000,
             ),
         }
 
@@ -342,6 +370,7 @@ class TestShopPriceQuotes:
 # ---------------------------------------------------------------------------
 # Integration tests: wallet endpoints
 # ---------------------------------------------------------------------------
+
 
 class TestWalletEndpoints:
     def test_get_wallet_empty(self, db_client, auth_header, character_id):
@@ -418,6 +447,7 @@ class TestWalletEndpoints:
 # Integration tests: shop buy/sell round-trip
 # ---------------------------------------------------------------------------
 
+
 class TestShopBuySell:
     """Full integration: grant gold → buy item → verify wallet → sell back → verify prices."""
 
@@ -447,7 +477,7 @@ class TestShopBuySell:
 
         # Verify wallet was actually debited
         wallet_resp = db_client.get(f"/wallet/{char_id}", headers=auth_header)
-        assert wallet_resp.json()["balances"]["inkglass_dark"] == 467
+        assert wallet_resp.json()["balances"]["gold"] == 467
 
     @patch("relay.endpoints.shop.load_npc")
     @patch("relay.endpoints.shop._load_item")
@@ -483,7 +513,9 @@ class TestShopBuySell:
 
     @patch("relay.endpoints.shop.load_npc")
     @patch("relay.endpoints.shop._load_item")
-    def test_buy_sell_roundtrip_prices(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
+    def test_buy_sell_roundtrip_prices(
+        self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id
+    ):
         """Verify the full round-trip: buy at markup, sell at 50% base. Player loses money."""
         char_id = funded_character_id
         npc = _make_shop_npc()
@@ -543,7 +575,9 @@ class TestShopBuySell:
 
     @patch("relay.endpoints.shop.load_npc")
     @patch("relay.endpoints.shop._load_item")
-    def test_sell_item_not_in_inventory(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
+    def test_sell_item_not_in_inventory(
+        self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id
+    ):
         """Can't sell an item you don't have."""
         npc = _make_shop_npc()
         mock_load_npc.return_value = npc
@@ -561,13 +595,17 @@ class TestShopBuySell:
     @patch("relay.endpoints.shop._load_item")
     def test_buy_legendary_blocked(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
         """Legendary items cannot be purchased."""
-        npc = _make_shop_npc(items=[
-            {"item_id": "legendary_blade", "stock_quantity": 1, "markup_percentage": 0.0},
-        ])
+        npc = _make_shop_npc(
+            items=[
+                {"item_id": "legendary_blade", "stock_quantity": 1, "markup_percentage": 0.0},
+            ]
+        )
         mock_load_npc.return_value = npc
         mock_load_item.return_value = _make_item(
-            item_id="legendary_blade", name="Legendary Blade",
-            rarity="legendary", value=50000,
+            item_id="legendary_blade",
+            name="Legendary Blade",
+            rarity="legendary",
+            value=50000,
         )
 
         resp = db_client.post(
@@ -605,17 +643,20 @@ class TestShopBuySell:
 # Integration tests: faction-modified pricing
 # ---------------------------------------------------------------------------
 
+
 class TestFactionPricing:
     @patch("relay.endpoints.shop.load_npc")
     @patch("relay.endpoints.shop._load_item")
-    def test_allied_faction_buy_discount(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
-        """Allied faction gives 10% buy discount."""
+    def test_allied_faction_buy_discount(
+        self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id
+    ):
+        """Allied faction gives 20% buy discount."""
         char_id = funded_character_id
         npc = _make_shop_npc()
         mock_load_npc.return_value = npc
         mock_load_item.return_value = _make_item(item_id="iron_sword", value=30)
 
-        # Set faction standing to allied (50+)
+        # Set faction standing to allied (51+)
         db_client.patch(
             f"/character/{char_id}",
             json={"faction_standing": {"market_district": 60}},
@@ -629,13 +670,15 @@ class TestFactionPricing:
         )
         assert resp.status_code == 200
         receipt = resp.json()
-        # 30 * 1.10 markup * 0.90 allied = 29.7 → ceil = 30
-        assert receipt["unit_price"] == 30
+        # 30 * 1.10 markup * 0.80 allied = 26.4 → round = 26
+        assert receipt["unit_price"] == 26
         assert receipt["faction_tier"] == "allied"
 
     @patch("relay.endpoints.shop.load_npc")
     @patch("relay.endpoints.shop._load_item")
-    def test_allied_faction_sell_bonus(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
+    def test_allied_faction_sell_bonus(
+        self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id
+    ):
         """Allied faction gives 60% sell-back (50% + 10%)."""
         char_id = funded_character_id
         npc = _make_shop_npc()
@@ -667,7 +710,9 @@ class TestFactionPricing:
 
     @patch("relay.endpoints.shop.load_npc")
     @patch("relay.endpoints.shop._load_item")
-    def test_hostile_faction_buy_refused(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
+    def test_hostile_faction_buy_refused(
+        self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id
+    ):
         """Hostile faction refuses to trade."""
         char_id = funded_character_id
         npc = _make_shop_npc()
@@ -691,8 +736,10 @@ class TestFactionPricing:
 
     @patch("relay.endpoints.shop.load_npc")
     @patch("relay.endpoints.shop._load_item")
-    def test_unfriendly_surcharge_and_penalty(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
-        """Unfriendly: +10% buy surcharge, 40% sell-back."""
+    def test_unfriendly_surcharge_and_penalty(
+        self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id
+    ):
+        """Unfriendly: +25% buy surcharge, 40% sell-back."""
         char_id = funded_character_id
         npc = _make_shop_npc()
         mock_load_npc.return_value = npc
@@ -712,8 +759,8 @@ class TestFactionPricing:
         )
         assert buy_resp.status_code == 200
         buy = buy_resp.json()
-        # 30 * 1.10 markup * 1.10 unfriendly = 36.3 → round = 36
-        assert buy["unit_price"] == 36
+        # 30 * 1.10 markup * 1.25 unfriendly = 41.25 → round = 41
+        assert buy["unit_price"] == 41
 
         # Sell back
         sell_resp = db_client.post(
@@ -731,20 +778,26 @@ class TestFactionPricing:
 # Edge cases
 # ---------------------------------------------------------------------------
 
+
 class TestEdgeCases:
     @patch("relay.endpoints.shop.load_npc")
     @patch("relay.endpoints.shop._load_item")
     def test_sell_bound_item_rejected(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
         """Bound items cannot be sold."""
         char_id = funded_character_id
-        npc = _make_shop_npc(items=[
-            {"item_id": "quest_ring", "stock_quantity": 1, "markup_percentage": 0.0},
-        ])
+        npc = _make_shop_npc(
+            items=[
+                {"item_id": "quest_ring", "stock_quantity": 1, "markup_percentage": 0.0},
+            ]
+        )
         mock_load_npc.return_value = npc
 
         ring = _make_item(
-            item_id="quest_ring", name="Quest Ring",
-            rarity="common", value=50, binding="bind_on_acquire",
+            item_id="quest_ring",
+            name="Quest Ring",
+            rarity="common",
+            value=50,
+            binding="bind_on_acquire",
         )
         mock_load_item.return_value = ring
 
@@ -772,7 +825,9 @@ class TestEdgeCases:
         npc = _make_shop_npc()
         mock_load_npc.return_value = npc
         mock_load_item.return_value = _make_item(
-            item_id="unknown_item", name="Mystery Box", value=999,
+            item_id="unknown_item",
+            name="Mystery Box",
+            value=999,
         )
 
         resp = db_client.post(
@@ -800,3 +855,185 @@ class TestEdgeCases:
             )
             assert resp.status_code == 400
             assert resp.json()["code"] == "not_a_shop"
+
+
+# ---------------------------------------------------------------------------
+# Step 12 improvements — new tests
+# ---------------------------------------------------------------------------
+
+
+class TestWorldCurrency:
+    """#7 — get_world_currency maps world_id to named currency."""
+
+    def test_known_worlds(self):
+        from relay.economy.shop import get_world_currency
+
+        assert get_world_currency("inkglass_dark") == "gold"
+        assert get_world_currency("murim") == "silver_taels"
+        assert get_world_currency("cybernightlife") == "credits"
+
+    def test_unknown_world_falls_back_to_world_id(self):
+        from relay.economy.shop import get_world_currency
+
+        assert get_world_currency("some_new_world") == "some_new_world"
+
+
+class TestBindingAwareStacking:
+    """#4 — _add_to_inventory stacks by item_id AND binding_state."""
+
+    def test_unbound_stacks_with_unbound(self):
+        from relay.economy.shop import _add_to_inventory
+
+        item = _make_item(item_id="iron_sword", binding="unbound")
+        inventory: list[dict] = [{"item_id": "iron_sword", "quantity": 2, "binding_state": "unbound"}]
+        _add_to_inventory(inventory, item, 3)
+        assert len(inventory) == 1
+        assert inventory[0]["quantity"] == 5
+
+    def test_bound_does_not_stack_with_unbound(self):
+        from relay.economy.shop import _add_to_inventory
+
+        item = _make_item(item_id="iron_sword", binding="bind_on_acquire")
+        inventory: list[dict] = [{"item_id": "iron_sword", "quantity": 2, "binding_state": "unbound"}]
+        _add_to_inventory(inventory, item, 1)
+        # Should create a new stack, not merge
+        assert len(inventory) == 2
+        assert inventory[0]["binding_state"] == "unbound"
+        assert inventory[0]["quantity"] == 2
+        assert inventory[1]["binding_state"] == "bound"
+        assert inventory[1]["quantity"] == 1
+
+
+class TestNpcFactionId:
+    """#8 — _npc_faction_id prefers explicit faction_id over region_id."""
+
+    def test_explicit_faction_id(self):
+        from relay.economy.shop import _npc_faction_id
+
+        npc = _make_shop_npc(faction_region="market_district")
+        # Simulate NPC having an explicit faction_id
+        object.__setattr__(npc, "faction_id", "thieves_guild")
+        assert _npc_faction_id(npc) == "thieves_guild"
+
+    def test_falls_back_to_region_id(self):
+        from relay.economy.shop import _npc_faction_id
+
+        npc = _make_shop_npc(faction_region="market_district")
+        assert _npc_faction_id(npc) == "market_district"
+
+
+class TestProduceOutputMutation:
+    """#9 — produce_output always mutates in-place."""
+
+    def test_stacking_returns_same_list(self):
+        from relay.crafting.crafter import produce_output
+
+        inventory: list[dict] = [{"item_id": "plank", "quantity": 3, "binding_state": "unbound"}]
+        original_id = id(inventory)
+        result = produce_output("plank", 2, inventory)
+        # Must return the same list object (in-place mutation)
+        assert id(result) == original_id
+        assert len(result) == 1
+        assert result[0]["quantity"] == 5
+
+    def test_new_item_returns_same_list(self):
+        from relay.crafting.crafter import produce_output
+
+        inventory: list[dict] = [{"item_id": "plank", "quantity": 3, "binding_state": "unbound"}]
+        original_id = id(inventory)
+        result = produce_output("nail", 10, inventory)
+        assert id(result) == original_id
+        assert len(result) == 2
+
+
+class TestQuestReward:
+    """#10 — quest_reward helper creates a quest_reward transaction."""
+
+    @pytest.mark.asyncio()
+    async def test_quest_reward_credits_wallet(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from relay.economy.wallet import quest_reward
+
+        db = AsyncMock()
+        char = MagicMock()
+        char.wallet = {"gold": 100}
+        char.player_id = "p1"
+        char.id = "c1"
+        char.world_id = "inkglass_dark"
+        char.updated_at = None
+
+        new_balance = await quest_reward(
+            db,
+            char,
+            currency="gold",
+            amount=50,
+            quest_id="find_the_sword",
+        )
+        assert new_balance == 150
+        assert char.wallet["gold"] == 150
+        # Verify a TransactionLog was added
+        db.add.assert_called_once()
+        tx = db.add.call_args[0][0]
+        assert tx.tx_type == "quest_reward"
+        assert "find_the_sword" in tx.note
+
+
+class TestGatherTransactionLog:
+    """#11 — successful gather creates a transaction log entry."""
+
+    @patch("relay.endpoints.craft.resolve_check")
+    @patch("relay.endpoints.craft.validate_check")
+    def test_gather_creates_transaction(
+        self,
+        mock_validate,
+        mock_resolve,
+        db_client,
+        auth_header,
+        session_header,
+        character_id,
+    ):
+        mock_validate.return_value = {"skill": "survival", "dc": 10, "reason": "Gather"}
+        mock_resolve.return_value = {
+            "skill": "survival",
+            "dc": 10,
+            "roll": 15,
+            "total": 17,
+            "passed": True,
+            "advantage": False,
+            "disadvantage": False,
+            "dice": [15],
+            "ability_modifier": 2,
+            "proficiency_bonus": 0,
+        }
+
+        with patch("relay.crafting.gathering.random.randint", return_value=3):
+            resp = db_client.post(
+                "/gather",
+                json={
+                    "character_id": character_id,
+                    "node": {
+                        "material_id": "iron_ore",
+                        "skill": "survival",
+                        "dc": 10,
+                        "yield_min": 1,
+                        "yield_max": 5,
+                    },
+                },
+                headers=session_header,
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        assert resp.json()["quantity"] == 3
+
+        # Verify transaction log has a gather entry
+        tx_resp = db_client.get(
+            f"/wallet/{character_id}/transactions",
+            headers=auth_header,
+        )
+        txns = tx_resp.json()["transactions"]
+        gather_txns = [t for t in txns if t["tx_type"] == "gather"]
+        assert len(gather_txns) == 1
+        assert gather_txns[0]["item_id"] == "iron_ore"
+        assert gather_txns[0]["item_quantity"] == 3

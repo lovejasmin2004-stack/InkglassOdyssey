@@ -1,7 +1,27 @@
 from __future__ import annotations
 
+import json
 import logging
 import logging.config
+import time
+
+# Fields redacted from all log output (CLAUDE.md: never log API keys or prose at INFO+)
+_SENSITIVE_KEYS = frozenset(
+    {
+        "api_key",
+        "anthropic_api_key",
+        "jwt_secret",
+        "password",
+        "password_hash",
+        "token",
+        "secret",
+        "authorization",
+        "player_prose",
+        "npc_prose",
+    }
+)
+
+_REDACTED = "[REDACTED]"
 
 
 LOGGING_CONFIG = {
@@ -31,15 +51,46 @@ LOGGING_CONFIG = {
     },
 }
 
+_BUILTIN_RECORD_ATTRS = frozenset(
+    {
+        "name",
+        "msg",
+        "args",
+        "levelname",
+        "levelno",
+        "pathname",
+        "filename",
+        "module",
+        "exc_info",
+        "exc_text",
+        "stack_info",
+        "lineno",
+        "funcName",
+        "created",
+        "msecs",
+        "relativeCreated",
+        "thread",
+        "threadName",
+        "processName",
+        "process",
+        "message",
+        "taskName",
+        "color_message",
+    }
+)
+
+
+def _redact(value: object) -> object:
+    """Recursively redact sensitive keys from dicts/lists."""
+    if isinstance(value, dict):
+        return {k: _REDACTED if k.lower() in _SENSITIVE_KEYS else _redact(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact(item) for item in value]
+    return value
+
 
 class JSONFormatter(logging.Formatter):
-    import json as _json
-    import time as _time
-
     def format(self, record: logging.LogRecord) -> str:
-        import json
-        import time
-
         payload: dict = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(record.created)),
             "level": record.levelname,
@@ -48,20 +99,19 @@ class JSONFormatter(logging.Formatter):
         }
         if record.exc_info:
             payload["exc"] = self.formatException(record.exc_info)
-        extra_keys = set(record.__dict__) - {
-            "name", "msg", "args", "levelname", "levelno", "pathname",
-            "filename", "module", "exc_info", "exc_text", "stack_info",
-            "lineno", "funcName", "created", "msecs", "relativeCreated",
-            "thread", "threadName", "processName", "process", "message",
-            "taskName", "color_message",
-        }
-        for key in extra_keys:
+
+        for key in set(record.__dict__) - _BUILTIN_RECORD_ATTRS:
             val = record.__dict__[key]
-            try:
-                json.dumps(val)
-                payload[key] = val
-            except (TypeError, ValueError):
-                payload[key] = repr(val)
+            if key.lower() in _SENSITIVE_KEYS:
+                payload[key] = _REDACTED
+            else:
+                val = _redact(val)
+                try:
+                    json.dumps(val)
+                    payload[key] = val
+                except (TypeError, ValueError):
+                    payload[key] = repr(val)
+
         return json.dumps(payload)
 
 

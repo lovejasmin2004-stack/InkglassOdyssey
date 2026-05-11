@@ -95,12 +95,17 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["npc_id", "behavior_type", "loyalty_strain"],
+        "required": ["npc_id", "behavior_type", "loyalty_strain", "hp_current", "hp_max", "active"],
         "additionalProperties": false,
         "properties": {
-          "npc_id":         { "type": "string" },
-          "behavior_type":  { "type": "string", "enum": ["aggressive", "supportive", "defensive"] },
-          "loyalty_strain": { "type": "integer", "minimum": 0 }
+          "npc_id":           { "type": "string" },
+          "behavior_type":    { "type": "string", "enum": ["aggressive", "supportive", "defensive"] },
+          "loyalty_strain":   { "type": "integer", "minimum": 0 },
+          "hp_current":       { "type": "integer", "minimum": 0 },
+          "hp_max":           { "type": "integer", "minimum": 1 },
+          "conditions":       { "type": "array", "items": { "type": "string" }, "default": [] },
+          "exhaustion_level": { "type": "integer", "minimum": 0, "maximum": 6, "default": 0 },
+          "active":           { "type": "boolean" }
         }
       }
     },

@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import relay.config as _config
 import relay.database as _db
 from relay.database import get_db
 from relay.main import app
@@ -13,6 +14,10 @@ from relay.middleware.rate_limit import clear_buckets
 from relay.models import Base
 
 _TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
+
+# Set a sufficiently long JWT secret for the entire test session so PyJWT
+# never fires InsecureKeyLengthWarning (requires ≥32 bytes for HS256).
+_config.settings.jwt_secret = "test-secret-key-for-unit-tests-only-32bytes!"
 
 
 @pytest.fixture()
@@ -41,7 +46,9 @@ def db_client():
     asyncio.run(_create_tables())
 
     original_factory = _db.AsyncSessionLocal
+    original_admin_mode = _config.settings.admin_mode
     _db.AsyncSessionLocal = session_factory
+    _config.settings.admin_mode = True  # Allow protected-field writes in tests
     app.dependency_overrides[get_db] = override_get_db
     clear_buckets()
 
@@ -50,6 +57,7 @@ def db_client():
 
     app.dependency_overrides.clear()
     _db.AsyncSessionLocal = original_factory
+    _config.settings.admin_mode = original_admin_mode
 
     asyncio.run(_drop_tables())
     asyncio.run(engine.dispose())

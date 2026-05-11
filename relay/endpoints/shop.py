@@ -2,6 +2,7 @@
 
 Invariant #14: all economy transactions through relay endpoints.
 """
+
 from __future__ import annotations
 
 import json
@@ -18,7 +19,6 @@ from relay.ai.npc_loader import NpcLoadError, load_npc
 from relay.auth.middleware import get_current_token
 from relay.auth.tokens import AccountTokenPayload, SessionTokenPayload
 from relay.database import get_db
-from relay.economy.pricing import is_hostile
 from relay.economy.shop import (
     BoundItemCannotSell,
     HostileFaction,
@@ -26,9 +26,8 @@ from relay.economy.shop import (
     ItemNotInShop,
     LegendaryCannotPurchase,
     OutOfStock,
-    PriceQuote,
-    get_shop_prices,
     buy_item,
+    get_shop_prices,
     sell_item,
 )
 from relay.economy.wallet import InsufficientFunds
@@ -48,6 +47,7 @@ _ITEMS_ROOT = Path(__file__).parents[2] / "items"
 # ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
+
 
 class ShopItemResponse(BaseModel):
     item_id: str
@@ -91,6 +91,11 @@ class TransactionReceipt(BaseModel):
 # Item loader
 # ---------------------------------------------------------------------------
 
+# In-memory item cache.  Keyed by "{world_id}:{item_id}".
+# NOTE(Phase 0): This cache has no invalidation path.  Item file changes
+# while the relay is running will serve stale data until restart.
+# Phase 2 should add an admin endpoint (POST /admin/cache/clear) or a
+# file-watcher to invalidate on disk changes.
 _item_cache: dict[str, Item] = {}
 
 
@@ -144,6 +149,7 @@ def _load_shop_items(npc, world_id: str | None = None) -> dict[str, Item]:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 async def _get_character(db: AsyncSession, character_id: str, player_id: str) -> Character:
     result = await db.execute(select(Character).where(Character.id == character_id))
     character = result.scalar_one_or_none()
@@ -184,6 +190,7 @@ def _load_npc_or_404(npc_id: str):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.get("/{npc_id}", response_model=ShopResponse)
 async def get_shop(

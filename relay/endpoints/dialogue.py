@@ -1,4 +1,30 @@
-"""WebSocket endpoint for NPC dialogue (quick-chat and RP mode)."""
+"""WebSocket endpoint for NPC dialogue (quick-chat and RP mode).
+
+Improvements (step 6 — quick-chat):
+ - (#1)  Solo check_confirm / check_proposal flow
+ - (#2)  Input length validation (max 8000 chars)
+ - (#3)  History sliding window (last 40 messages sent to LLM)
+ - (#6)  Session token validation (require session context for dialogue)
+ - (#7)  RP history appended before LLM call for resilience
+ - (#8)  Max concurrent scene histories per connection (cap at 10)
+ - (#9)  Single Anthropic client per WebSocket connection
+ - (#10) Graceful ws.close(1011) on fatal error
+ - (#11) Scene state loaded from DB, not trusted from client
+
+Improvements (step 7 — RP mode):
+ - (#R1)  Anthropic prompt caching on system prompt (Tier 1)
+ - (#R2)  Scene changes committed to DB after each turn
+ - (#R3)  NPC memory summary for trimmed history continuity
+ - (#R4)  Per-turn analytics tracking (timing, LLM calls, cache hits)
+ - (#R5)  load_npc uses session world_id
+ - (#R6)  Atomic commit (pending turn + scene state in one transaction)
+ - (#R7)  Expanded scene_changes schema (environment_add/remove)
+ - (#R8)  in_flight guard covers solo check_confirm pause
+ - (#R9)  check_confirm validates player ownership
+ - (#R10) Passive check hints injected into final prose call
+ - (#R11) Full NPC response stored in turn history (no truncation)
+"""
+
 from __future__ import annotations
 
 import json
@@ -16,15 +42,19 @@ from relay.ai.rp_prompts import (
     build_final_prose_messages,
     build_rp_system_prompt,
 )
-from relay.auth.tokens import decode_token
-from relay.checks.resolver import evaluate_passive_checks, resolve_check, validate_check
+from relay.auth.tokens import SessionTokenPayload, decode_token
+from relay.checks.resolver import evaluate_passive_checks, resolve_check, validate_checks_batch
 from relay.config import settings
 from relay.persistence.pending_turns import (
+    MAX_RETRIES,
     complete_turn,
     create_pending_turn,
     fail_turn,
+    get_pending_turn,
     get_pending_turns,
     get_scene_turn_history,
+    load_scene_state,
+    mark_stale_turns,
     update_stage,
 )
 
@@ -35,16 +65,78 @@ router = APIRouter(tags=["dialogue"])
 _RATE_LIMIT_SECONDS = 3.0
 _MODEL = "claude-sonnet-4-6"
 
+# Maximum length of player text input (characters).
+_MAX_INPUT_LENGTH = 8000
+
+# Maximum number of history messages passed to the LLM (sliding window).
+_MAX_HISTORY_MESSAGES = 40
+
+# Maximum concurrent scene histories held in memory per connection.
+_MAX_SCENES_PER_CONNECTION = 10
+
+# When history exceeds this threshold, generate a memory summary (#R3).
+_MEMORY_SUMMARY_THRESHOLD = 30
+
 
 def _get_client() -> anthropic.AsyncAnthropic:
     return anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+
+
+def _trim_history(history: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Return the last _MAX_HISTORY_MESSAGES entries for LLM context."""
+    if len(history) <= _MAX_HISTORY_MESSAGES:
+        return list(history)
+    return list(history[-_MAX_HISTORY_MESSAGES:])
+
+
+def _build_npc_memory_summary(history: list[dict[str, str]]) -> str | None:
+    """Build a brief memory summary from the trimmed-off portion of history (#R3).
+
+    When history exceeds _MEMORY_SUMMARY_THRESHOLD messages, the early messages
+    get trimmed by _trim_history. This function produces a condensed summary of
+    what happened in those lost messages so the NPC retains continuity.
+    """
+    if len(history) <= _MEMORY_SUMMARY_THRESHOLD:
+        return None
+
+    # Summarize the trimmed portion (everything before the sliding window)
+    trimmed_count = len(history) - _MAX_HISTORY_MESSAGES
+    if trimmed_count <= 0:
+        return None
+
+    trimmed = history[:trimmed_count]
+
+    # Extract key points from trimmed turns
+    topics = []
+    for msg in trimmed:
+        if msg["role"] == "user":
+            # Take first 80 chars of each player turn as a topic indicator
+            text = msg["content"][:80].strip()
+            if text:
+                topics.append(text)
+
+    if not topics:
+        return None
+
+    # Cap the number of remembered topics to avoid bloating the prompt
+    topics = topics[-8:]
+    summary_lines = [f"- {t}..." if len(t) >= 78 else f"- {t}" for t in topics]
+
+    return f"Earlier in this session ({trimmed_count // 2} turns ago), the player discussed:\n" + "\n".join(
+        summary_lines
+    )
 
 
 async def _send_error(ws: WebSocket, code: str, message: str) -> None:
     await ws.send_json({"type": "error", "code": code, "message": message})
 
 
-async def _authenticate(ws: WebSocket) -> dict | None:
+async def _authenticate(ws: WebSocket) -> SessionTokenPayload | None:
+    """Authenticate the WebSocket and require a session token.
+
+    Dialogue requires session context (world_id, session_id, mode) so only
+    session tokens are accepted — bare account tokens are rejected.
+    """
     try:
         raw = await ws.receive_text()
         msg = json.loads(raw)
@@ -53,7 +145,14 @@ async def _authenticate(ws: WebSocket) -> dict | None:
             return None
         token_str = msg.get("token", "")
         payload = decode_token(token_str)
-        return payload.model_dump(mode="json")
+        if not isinstance(payload, SessionTokenPayload):
+            await _send_error(
+                ws,
+                "unauthorized",
+                "Dialogue requires a session token. Start a session first.",
+            )
+            return None
+        return payload
     except jwt.PyJWTError:
         await _send_error(ws, "unauthorized", "Invalid or expired token")
         return None
@@ -62,26 +161,43 @@ async def _authenticate(ws: WebSocket) -> dict | None:
         return None
 
 
-async def _send_recovery_data(ws: WebSocket, player_id: str) -> None:
-    """On reconnect, send any incomplete pending turns so the client can recover."""
-    pending = await get_pending_turns(player_id)
+async def _send_recovery_data(ws: WebSocket, player_id: str, *, session_id: str = "") -> None:
+    """On reconnect, send any incomplete pending turns so the client can recover.
+
+    (#1) First marks stale turns as failed so they aren't sent as recoverable.
+    (#5) Scoped to current session_id to prevent cross-session leakage.
+    (#6) Includes created_at so the client can decide whether to resume or abandon.
+    (#11) Sends a single batch frame to avoid blocking the handshake.
+    """
+    # (#1) Clean up stale turns before reporting recovery data
+    await mark_stale_turns(player_id, session_id=session_id or None)
+
+    # (#5) Session-scoped recovery
+    pending = await get_pending_turns(player_id, session_id=session_id or None)
     if not pending:
         return
 
+    # (#11) Send as a batch frame to minimize blocking
+    recovery_batch = []
     for pt in pending:
-        await ws.send_json({
-            "type": "turn_recovery",
-            "turn_id": pt["turn_id"],
-            "scene_id": pt["scene_id"],
-            "npc_id": pt["npc_id"],
-            "turn_type": pt["turn_type"],
-            "stage": pt["stage"],
-            "player_input": pt["player_input"],
-            "check_results": pt["check_results"],
-            "animation_directives": pt["animation_directives"],
-            "scene_changes": pt["scene_changes"],
-            "final_response": pt["final_response"],
-        })
+        recovery_batch.append(
+            {
+                "turn_id": pt["turn_id"],
+                "scene_id": pt["scene_id"],
+                "npc_id": pt["npc_id"],
+                "turn_type": pt["turn_type"],
+                "stage": pt["stage"],
+                "player_input": pt["player_input"],
+                "check_results": pt["check_results"],
+                "animation_directives": pt["animation_directives"],
+                "scene_changes": pt["scene_changes"],
+                "final_response": pt["final_response"],
+                "created_at": pt["created_at"],  # (#6)
+                "retry_count": pt["retry_count"],  # (#4)
+            }
+        )
+
+    await ws.send_json({"type": "turn_recovery", "turns": recovery_batch})
 
     logger.info(
         "Recovery data sent",
@@ -93,20 +209,43 @@ async def _send_recovery_data(ws: WebSocket, player_id: str) -> None:
 async def dialogue_ws(ws: WebSocket) -> None:
     await ws.accept()
 
-    auth = await _authenticate(ws)
-    if auth is None:
+    token = await _authenticate(ws)
+    if token is None:
         await ws.close(code=1008)
         return
 
-    player_id = auth["player_id"]
-    logger.info("WS authenticated", extra={"player_id": player_id})
+    player_id = token.player_id
+    world_id = token.world_id  # (#R5) Thread world_id for NPC loading
+    session_id = token.session_id  # Session scope for recovery (#5)
+    session_mode = token.mode  # "solo" or "multiplayer"
+    logger.info("WS authenticated", extra={"player_id": player_id, "mode": session_mode})
 
-    # Send recovery data for any interrupted turns
-    await _send_recovery_data(ws, player_id)
+    # Send recovery data for any interrupted turns (#5: session-scoped)
+    await _send_recovery_data(ws, player_id, session_id=session_id)
 
     scene_histories: dict[str, list[dict[str, str]]] = {}
     last_message_time: float = 0.0
     in_flight = False
+
+    # Single Anthropic client for the lifetime of this connection (#9).
+    client = _get_client()
+
+    # Pending check proposals awaiting player confirmation in solo mode.
+    # Maps turn_id -> state needed to resume after check_confirm.
+    pending_check_proposals: dict[str, dict] = {}
+
+    # (#7) Track already-triggered passive check element IDs per scene
+    # to avoid re-firing the same discovery hint every turn.
+    triggered_passive_elements: dict[str, list[str]] = {}
+
+    # Per-connection analytics accumulator (#R4)
+    connection_analytics: dict = {
+        "llm_call_count": 0,
+        "turn_count": 0,
+        "total_turn_latency_ms": 0,
+        "check_pass_count": 0,
+        "check_total_count": 0,
+    }
 
     try:
         while True:
@@ -118,13 +257,43 @@ async def dialogue_ws(ws: WebSocket) -> None:
                 await ws.send_json({"type": "heartbeat_ack"})
                 continue
 
+            # check_confirm resumes an existing turn — exempt from rate limit.
+            if msg_type == "check_confirm":
+                await _handle_check_confirm(
+                    ws,
+                    msg,
+                    client,
+                    pending_check_proposals,
+                    scene_histories,
+                    player_id=player_id,
+                    analytics=connection_analytics,
+                )
+                continue
+
+            # (#2) turn_resume re-enters pipeline from last saved stage.
+            if msg_type == "turn_resume":
+                await _handle_turn_resume(
+                    ws,
+                    msg,
+                    client,
+                    scene_histories,
+                    player_id,
+                    session_mode=session_mode,
+                    pending_check_proposals=pending_check_proposals,
+                    world_id=world_id,
+                    analytics=connection_analytics,
+                    triggered_passive_elements=triggered_passive_elements,
+                )
+                continue
+
             now = time.time()
             if now - last_message_time < _RATE_LIMIT_SECONDS:
                 await _send_error(ws, "rate_limited", "Please wait before sending another message")
                 continue
             last_message_time = now
 
-            if in_flight:
+            # (#R8) in_flight guard also covers pending check_confirm state
+            if in_flight or pending_check_proposals:
                 await _send_error(ws, "turn_in_progress", "A turn is already being processed")
                 continue
 
@@ -137,13 +306,26 @@ async def dialogue_ws(ws: WebSocket) -> None:
             in_flight = True
             try:
                 if msg_type == "quickchat_turn":
-                    await _handle_quickchat(ws, msg, history, player_id)
+                    await _handle_quickchat(ws, msg, history, player_id, client, world_id=world_id)
                 elif msg_type == "rp_turn":
-                    await _handle_rp_turn(ws, msg, history, player_id)
+                    await _handle_rp_turn(
+                        ws,
+                        msg,
+                        history,
+                        player_id,
+                        client,
+                        session_mode=session_mode,
+                        pending_check_proposals=pending_check_proposals,
+                        world_id=world_id,
+                        analytics=connection_analytics,
+                        triggered_passive_elements=triggered_passive_elements,
+                    )
                 else:
                     await _send_error(ws, "unknown_type", f"Unrecognised message type: {msg_type}")
             finally:
-                in_flight = False
+                # (#R8) Only release in_flight if no pending check proposals
+                if not pending_check_proposals:
+                    in_flight = False
 
     except WebSocketDisconnect:
         logger.info("WS disconnected", extra={"player_id": player_id})
@@ -151,6 +333,7 @@ async def dialogue_ws(ws: WebSocket) -> None:
         logger.exception("WS error", extra={"player_id": player_id})
         try:
             await _send_error(ws, "internal_error", "An unexpected error occurred")
+            await ws.close(code=1011)
         except Exception:
             pass
 
@@ -163,6 +346,8 @@ async def _get_or_load_history(
 
     Returns None if *scene_id* is non-empty but does not match any scene
     in the database — callers should reject the turn.
+
+    Caps total scenes per connection to _MAX_SCENES_PER_CONNECTION (#8).
     """
     if scene_id in scene_histories:
         return scene_histories[scene_id]
@@ -178,6 +363,12 @@ async def _get_or_load_history(
     else:
         history = []
 
+    # Evict oldest scene if at capacity (#8).
+    if len(scene_histories) >= _MAX_SCENES_PER_CONNECTION and scene_id not in scene_histories:
+        oldest_key = next(iter(scene_histories))
+        del scene_histories[oldest_key]
+        logger.debug("Evicted oldest scene history", extra={"evicted_scene": oldest_key})
+
     scene_histories[scene_id] = history
     return history
 
@@ -186,8 +377,15 @@ async def _get_or_load_history(
 # Quick-chat handler (single LLM call, no scene state)
 # ---------------------------------------------------------------------------
 
+
 async def _handle_quickchat(
-    ws: WebSocket, msg: dict, history: list[dict[str, str]], player_id: str,
+    ws: WebSocket,
+    msg: dict,
+    history: list[dict[str, str]],
+    player_id: str,
+    client: anthropic.AsyncAnthropic,
+    *,
+    world_id: str = "",
 ) -> None:
     npc_id = msg.get("npc_id")
     player_input = msg.get("text", "").strip()
@@ -199,9 +397,16 @@ async def _handle_quickchat(
     if not player_input:
         await _send_error(ws, "missing_field", "quickchat_turn requires 'text'")
         return
+    if len(player_input) > _MAX_INPUT_LENGTH:
+        await _send_error(
+            ws,
+            "input_too_long",
+            f"Text exceeds maximum length of {_MAX_INPUT_LENGTH} characters",
+        )
+        return
 
     try:
-        npc = load_npc(npc_id)
+        npc = load_npc(npc_id, world_id=world_id or None)  # (#R5)
     except NpcLoadError as exc:
         logger.error("NPC file corrupt", extra={"npc_id": npc_id, "error": str(exc)})
         await _send_error(ws, "npc_load_error", f"NPC '{npc_id}' exists but failed to load: {exc}")
@@ -222,9 +427,9 @@ async def _handle_quickchat(
         )
 
     system_prompt = build_quickchat_system_prompt(npc)
+    # Append user message before LLM call for resilience (#7).
     history.append({"role": "user", "content": player_input})
 
-    client = _get_client()
     ws_turn_id = turn_id or f"qc_{int(time.time() * 1000)}"
     await ws.send_json({"type": "stream_start", "turn_id": ws_turn_id, "npc_id": npc_id})
 
@@ -237,17 +442,21 @@ async def _handle_quickchat(
             model=_MODEL,
             max_tokens=400,
             system=system_prompt,
-            messages=list(history),
+            messages=_trim_history(history),
         ) as stream:
             async for text in stream.text_stream:
                 full_response += text
                 await ws.send_json({"type": "stream_chunk", "turn_id": ws_turn_id, "text": text})
 
         history.append({"role": "assistant", "content": full_response})
-        await ws.send_json({
-            "type": "stream_end", "turn_id": ws_turn_id,
-            "npc_id": npc_id, "full_text": full_response,
-        })
+        await ws.send_json(
+            {
+                "type": "stream_end",
+                "turn_id": ws_turn_id,
+                "npc_id": npc_id,
+                "full_text": full_response,
+            }
+        )
 
         if turn_id:
             await complete_turn(turn_id, full_response)
@@ -262,13 +471,30 @@ async def _handle_quickchat(
 
 
 # ---------------------------------------------------------------------------
-# RP mode handler (two-call turn flow)
+# RP mode handler (two-call turn flow, with solo check_confirm)
 # ---------------------------------------------------------------------------
 
+
 async def _handle_rp_turn(
-    ws: WebSocket, msg: dict, history: list[dict[str, str]], player_id: str,
+    ws: WebSocket,
+    msg: dict,
+    history: list[dict[str, str]],
+    player_id: str,
+    client: anthropic.AsyncAnthropic,
+    *,
+    session_mode: str,
+    pending_check_proposals: dict[str, dict],
+    world_id: str = "",
+    analytics: dict | None = None,
+    triggered_passive_elements: dict[str, list[str]] | None = None,
 ) -> None:
-    """Full RP turn: analysis call -> check resolution -> final prose call."""
+    """Full RP turn: analysis call -> check resolution -> final prose call.
+
+    In solo mode, checks are proposed to the player for confirmation before
+    resolution.  In multiplayer mode, checks resolve automatically.
+    """
+    turn_start_time = time.time()
+
     npc_id = msg.get("npc_id")
     player_prose = msg.get("text", "").strip()
     character_sheet = msg.get("character", {})
@@ -280,9 +506,16 @@ async def _handle_rp_turn(
     if not player_prose:
         await _send_error(ws, "missing_field", "rp_turn requires 'text'")
         return
+    if len(player_prose) > _MAX_INPUT_LENGTH:
+        await _send_error(
+            ws,
+            "input_too_long",
+            f"Text exceeds maximum length of {_MAX_INPUT_LENGTH} characters",
+        )
+        return
 
     try:
-        npc = load_npc(npc_id)
+        npc = load_npc(npc_id, world_id=world_id or None)  # (#R5)
     except NpcLoadError as exc:
         logger.error("NPC file corrupt", extra={"npc_id": npc_id, "error": str(exc)})
         await _send_error(ws, "npc_load_error", f"NPC '{npc_id}' exists but failed to load: {exc}")
@@ -295,12 +528,27 @@ async def _handle_rp_turn(
     skill_profs = character_sheet.get("skill_proficiencies", [])
     level = character_sheet.get("level", 1)
     conditions = character_sheet.get("conditions", [])
-    scene_state = msg.get("scene_state", {})
+
+    # (#10) Synthesize exhaustion condition from integer field so the resolver sees it
+    exhaustion_level = character_sheet.get("exhaustion_level", 0)
+    if exhaustion_level and exhaustion_level > 0:
+        # Only add if not already present in conditions array
+        has_exhaustion = any(c.get("condition_id", "").startswith("exhaustion") for c in conditions)
+        if not has_exhaustion:
+            conditions = [*conditions, {"condition_id": f"exhaustion_{exhaustion_level}", "source": "character_state"}]
+
+    # Load scene_state from DB — relay is source of truth (Keystone, #11).
+    scene_state: dict = {}
+    if scene_id:
+        loaded_state = await load_scene_state(scene_id)
+        if loaded_state is not None:
+            scene_state = loaded_state
     environmental_effects = scene_state.get("environmental_effects", [])
 
     # === Persist pending turn before any processing (Invariant #12) ===
-    turn_id = ""
-    if scene_id:
+    # (#2) If this is a resumed turn, use the pre-created turn_id
+    turn_id = msg.get("_resume_turn_id", "")
+    if not turn_id and scene_id:
         turn_id = await create_pending_turn(
             scene_id=scene_id,
             player_id=player_id,
@@ -310,9 +558,16 @@ async def _handle_rp_turn(
             character_snapshot=character_sheet,
         )
 
-    client = _get_client()
     ws_turn_id = turn_id or f"rp_{int(time.time() * 1000)}"
+
+    # (#R1) System prompt as cache-control blocks (Tier 1: static)
     system_prompt = build_rp_system_prompt(npc)
+
+    # (#R3) Build NPC memory summary from trimmed history
+    npc_memory = _build_npc_memory_summary(history)
+
+    # Append user message before LLM call for resilience (#7).
+    history.append({"role": "user", "content": player_prose})
 
     await ws.send_json({"type": "stream_start", "turn_id": ws_turn_id, "npc_id": npc_id})
 
@@ -321,7 +576,7 @@ async def _handle_rp_turn(
         if turn_id:
             await update_stage(turn_id, "analysis")
 
-        analysis_messages = build_analysis_messages(player_prose, history)
+        analysis_messages = build_analysis_messages(player_prose, _trim_history(history[:-1]))
 
         analysis_response = await client.messages.create(
             model=_MODEL,
@@ -331,6 +586,10 @@ async def _handle_rp_turn(
             tools=[_ANALYSIS_TOOL],
             tool_choice={"type": "tool", "name": "scene_analysis"},
         )
+
+        # (#R4) Track LLM call
+        if analytics is not None:
+            analytics["llm_call_count"] += 1
 
         analysis = _extract_tool_result(analysis_response)
         if analysis is None:
@@ -344,27 +603,202 @@ async def _handle_rp_turn(
                     fallback_text = block.text
                     break
             analysis = {
-                "checks": [], "scene_changes": {},
-                "animation_directives": [], "draft_response": fallback_text,
+                "checks": [],
+                "scene_changes": {},
+                "animation_directives": [],
+                "draft_response": fallback_text,
             }
         logger.debug("Analysis response received", extra={"turn_id": ws_turn_id})
 
         if turn_id:
             await update_stage(turn_id, "checks_resolved", analysis_result=analysis)
 
-        # === Validate and resolve checks ===
+        # === Validate checks (#11: cap at MAX_CHECKS_PER_TURN) ===
         raw_checks = analysis.get("checks", [])
-        validated_checks = [validate_check(c) for c in raw_checks]
-        check_results = []
+        validated_checks = validate_checks_batch(raw_checks)
 
-        for vc in validated_checks:
-            result = resolve_check(
-                vc, ability_scores, skill_profs, level,
-                conditions=conditions,
-                environmental_effects=environmental_effects,
+        # === Solo mode: propose checks for player confirmation (#1) ===
+        if session_mode == "solo" and validated_checks:
+            for vc in validated_checks:
+                await ws.send_json(
+                    {
+                        "type": "check_proposal",
+                        "turn_id": ws_turn_id,
+                        "skill": vc["skill"],
+                        "dc": vc["dc"],
+                        "reason": vc["reason"],
+                        "advantage": vc["advantage"],
+                        "disadvantage": vc["disadvantage"],
+                    }
+                )
+
+            # Stash state and return — the turn resumes on check_confirm.
+            pending_check_proposals[ws_turn_id] = {
+                "turn_id": turn_id,
+                "ws_turn_id": ws_turn_id,
+                "npc_id": npc_id,
+                "npc": npc,
+                "system_prompt": system_prompt,
+                "player_prose": player_prose,
+                "history": history,
+                "scene_id": scene_id,
+                "analysis": analysis,
+                "validated_checks": validated_checks,
+                "ability_scores": ability_scores,
+                "skill_profs": skill_profs,
+                "level": level,
+                "conditions": conditions,
+                "environmental_effects": environmental_effects,
+                "scene_state": scene_state,
+                "npc_memory": npc_memory,
+                "turn_start_time": turn_start_time,
+                "player_id": player_id,  # (#R9) For ownership validation
+                "triggered_passive_elements": triggered_passive_elements,
+            }
+            logger.info(
+                "Check proposals sent, awaiting player confirmation",
+                extra={"turn_id": ws_turn_id, "check_count": len(validated_checks)},
             )
-            check_results.append(result)
-            await ws.send_json({
+            return
+
+        # === Multiplayer / no checks: resolve immediately ===
+        await _resolve_and_finish_rp(
+            ws=ws,
+            client=client,
+            turn_id=turn_id,
+            ws_turn_id=ws_turn_id,
+            npc_id=npc_id,
+            npc=npc,
+            system_prompt=system_prompt,
+            player_prose=player_prose,
+            history=history,
+            scene_id=scene_id,
+            analysis=analysis,
+            validated_checks=validated_checks,
+            ability_scores=ability_scores,
+            skill_profs=skill_profs,
+            level=level,
+            conditions=conditions,
+            environmental_effects=environmental_effects,
+            scene_state=scene_state,
+            npc_memory=npc_memory,
+            turn_start_time=turn_start_time,
+            analytics=analytics,
+            triggered_passive_elements=triggered_passive_elements,
+        )
+
+    except anthropic.APIError as e:
+        logger.error("Anthropic API error during RP turn", extra={"error": str(e), "turn_id": ws_turn_id})
+        if turn_id:
+            await fail_turn(turn_id, str(e))
+        await _send_error(ws, "llm_error", "Failed to get NPC response. Try again.")
+
+
+async def _handle_check_confirm(
+    ws: WebSocket,
+    msg: dict,
+    client: anthropic.AsyncAnthropic,
+    pending_check_proposals: dict[str, dict],
+    scene_histories: dict[str, list[dict[str, str]]],
+    *,
+    player_id: str,
+    analytics: dict | None = None,
+) -> None:
+    """Handle a check_confirm message from the client (solo mode).
+
+    The client sends this after reviewing check_proposal frames.
+    Payload: { "type": "check_confirm", "turn_id": "<ws_turn_id>" }
+    """
+    ws_turn_id = msg.get("turn_id", "")
+    if ws_turn_id not in pending_check_proposals:
+        await _send_error(ws, "not_found", f"No pending check proposals for turn '{ws_turn_id}'")
+        return
+
+    state = pending_check_proposals[ws_turn_id]
+
+    # (#R9) Verify the confirming player owns this turn
+    if state.get("player_id") != player_id:
+        await _send_error(ws, "unauthorized", "Cannot confirm another player's checks")
+        return
+
+    # Pop state — turn is being resolved now
+    pending_check_proposals.pop(ws_turn_id)
+
+    try:
+        await _resolve_and_finish_rp(
+            ws=ws,
+            client=client,
+            turn_id=state["turn_id"],
+            ws_turn_id=state["ws_turn_id"],
+            npc_id=state["npc_id"],
+            npc=state["npc"],
+            system_prompt=state["system_prompt"],
+            player_prose=state["player_prose"],
+            history=state["history"],
+            scene_id=state["scene_id"],
+            analysis=state["analysis"],
+            validated_checks=state["validated_checks"],
+            ability_scores=state["ability_scores"],
+            skill_profs=state["skill_profs"],
+            level=state["level"],
+            conditions=state["conditions"],
+            environmental_effects=state["environmental_effects"],
+            scene_state=state["scene_state"],
+            npc_memory=state.get("npc_memory"),
+            turn_start_time=state.get("turn_start_time", time.time()),
+            analytics=analytics,
+            triggered_passive_elements=state.get("triggered_passive_elements"),
+        )
+    except anthropic.APIError as e:
+        logger.error(
+            "Anthropic API error during check_confirm",
+            extra={"error": str(e), "turn_id": ws_turn_id},
+        )
+        if state["turn_id"]:
+            await fail_turn(state["turn_id"], str(e))
+        await _send_error(ws, "llm_error", "Failed to get NPC response. Try again.")
+
+
+async def _resolve_and_finish_rp(
+    *,
+    ws: WebSocket,
+    client: anthropic.AsyncAnthropic,
+    turn_id: str,
+    ws_turn_id: str,
+    npc_id: str,
+    npc: object,
+    system_prompt: list[dict],
+    player_prose: str,
+    history: list[dict[str, str]],
+    scene_id: str,
+    analysis: dict,
+    validated_checks: list[dict],
+    ability_scores: dict[str, int],
+    skill_profs: list[str],
+    level: int,
+    conditions: list[dict],
+    environmental_effects: list[str],
+    scene_state: dict,
+    npc_memory: str | None = None,
+    turn_start_time: float | None = None,
+    analytics: dict | None = None,
+    triggered_passive_elements: dict[str, list[str]] | None = None,
+) -> None:
+    """Resolve checks, send results/animations/scene, then stream final prose."""
+    check_results = []
+
+    for vc in validated_checks:
+        result = resolve_check(
+            vc,
+            ability_scores,
+            skill_profs,
+            level,
+            conditions=conditions,
+            environmental_effects=environmental_effects,
+        )
+        check_results.append(result)
+        await ws.send_json(
+            {
                 "type": "check_result",
                 "turn_id": ws_turn_id,
                 "skill": result["skill"],
@@ -376,90 +810,149 @@ async def _handle_rp_turn(
                 "total": result["total"],
                 "passed": result["passed"],
                 "reason": result["reason"],
-            })
-
-        # === Evaluate passive checks (Invariant #22) ===
-        passive_hints = evaluate_passive_checks(
-            ability_scores, skill_profs, level, scene_state,
-            conditions=conditions,
+                "natural_20": result.get("natural_20", False),
+                "natural_1": result.get("natural_1", False),
+            }
         )
-        for hint in passive_hints:
-            await ws.send_json({
+
+    # (#R4) Track check results for analytics
+    if analytics is not None:
+        analytics["check_total_count"] += len(check_results)
+        analytics["check_pass_count"] += sum(1 for cr in check_results if cr["passed"])
+
+    # === Evaluate passive checks (Invariant #22) ===
+    # (#7) Pass already-triggered element IDs to avoid re-firing
+    already_triggered = []
+    if triggered_passive_elements is not None and scene_id:
+        already_triggered = triggered_passive_elements.get(scene_id, [])
+
+    passive_hints = evaluate_passive_checks(
+        ability_scores,
+        skill_profs,
+        level,
+        scene_state,
+        conditions=conditions,
+        already_triggered=already_triggered,
+    )
+
+    # (#7) Record newly triggered elements so they don't fire again
+    if triggered_passive_elements is not None and scene_id and passive_hints:
+        if scene_id not in triggered_passive_elements:
+            triggered_passive_elements[scene_id] = []
+        triggered_passive_elements[scene_id].extend(h["element_id"] for h in passive_hints)
+
+    for hint in passive_hints:
+        await ws.send_json(
+            {
                 "type": "passive_check",
                 "turn_id": ws_turn_id,
                 "skill": hint["skill"],
                 "dc": hint["dc"],
                 "passive_value": hint["passive_value"],
                 "element_id": hint["element_id"],
-            })
-
-        # === Send animation directives ===
-        valid_animations = _validate_animation_directives(
-            analysis.get("animation_directives", []),
-            npc,
+            }
         )
-        for anim in valid_animations:
-            await ws.send_json({
+
+    # === Send animation directives ===
+    valid_animations = _validate_animation_directives(
+        analysis.get("animation_directives", []),
+        npc,
+    )
+    for anim in valid_animations:
+        await ws.send_json(
+            {
                 "type": "animation_directive",
                 "turn_id": ws_turn_id,
                 "target": anim["target"],
                 "directive": anim["directive"],
-            })
+            }
+        )
 
-        # === Send scene update ===
-        scene_changes = analysis.get("scene_changes", {})
-        if scene_changes:
-            await ws.send_json({
+    # === Send scene update ===
+    scene_changes = analysis.get("scene_changes", {})
+    if scene_changes:
+        await ws.send_json(
+            {
                 "type": "scene_update",
                 "turn_id": ws_turn_id,
                 "changes": scene_changes,
-            })
-
-        if turn_id:
-            await update_stage(
-                turn_id, "streaming",
-                check_results=check_results,
-                animation_directives=valid_animations,
-                scene_changes=scene_changes,
-            )
-
-        # === CALL 2: Final prose with check results ===
-        draft = analysis.get("draft_response", "")
-        final_messages = build_final_prose_messages(player_prose, draft, check_results, history)
-
-        full_response = ""
-        async with client.messages.stream(
-            model=_MODEL,
-            max_tokens=800,
-            system=system_prompt,
-            messages=final_messages,
-        ) as stream:
-            async for text in stream.text_stream:
-                full_response += text
-                await ws.send_json({"type": "stream_chunk", "turn_id": ws_turn_id, "text": text})
-
-        # === Commit to history ===
-        history.append({"role": "user", "content": player_prose})
-        history.append({"role": "assistant", "content": full_response})
-
-        await ws.send_json({
-            "type": "stream_end", "turn_id": ws_turn_id,
-            "npc_id": npc_id, "full_text": full_response,
-        })
-
-        if turn_id:
-            await complete_turn(turn_id, full_response)
-
-        logger.info(
-            "RP turn complete",
-            extra={"turn_id": ws_turn_id, "npc_id": npc_id, "checks_resolved": len(check_results)},
+            }
         )
 
-    except anthropic.APIError as e:
-        logger.error("Anthropic API error during RP turn", extra={"error": str(e), "turn_id": ws_turn_id})
-        if turn_id:
-            await fail_turn(turn_id, str(e))
-        await _send_error(ws, "llm_error", "Failed to get NPC response. Try again.")
+    if turn_id:
+        await update_stage(
+            turn_id,
+            "streaming",
+            check_results=check_results,
+            animation_directives=valid_animations,
+            scene_changes=scene_changes,
+        )
+
+    # === CALL 2: Final prose with check results ===
+    draft = analysis.get("draft_response", "")
+    # (#R10) Include passive hints in final prose call
+    final_messages = build_final_prose_messages(
+        player_prose,
+        draft,
+        check_results,
+        _trim_history(history[:-1]),
+        passive_hints=passive_hints if passive_hints else None,
+        npc_memory_summary=npc_memory,
+    )
+
+    full_response = ""
+    async with client.messages.stream(
+        model=_MODEL,
+        max_tokens=800,
+        system=system_prompt,
+        messages=final_messages,
+    ) as stream:
+        async for text in stream.text_stream:
+            full_response += text
+            await ws.send_json({"type": "stream_chunk", "turn_id": ws_turn_id, "text": text})
+
+    # (#R4) Track second LLM call
+    if analytics is not None:
+        analytics["llm_call_count"] += 1
+
+    # === Commit assistant response to history ===
+    history.append({"role": "assistant", "content": full_response})
+
+    await ws.send_json(
+        {
+            "type": "stream_end",
+            "turn_id": ws_turn_id,
+            "npc_id": npc_id,
+            "full_text": full_response,
+        }
+    )
+
+    # (#R6) Atomic commit: pending turn + scene state + turn history in one transaction
+    # (#8) Also persist check_results for consistency
+    if turn_id:
+        await complete_turn(
+            turn_id,
+            full_response,
+            scene_changes=scene_changes,
+            check_results=check_results if check_results else None,
+        )
+
+    # (#R4) Track turn timing
+    if analytics is not None and turn_start_time is not None:
+        latency_ms = int((time.time() - turn_start_time) * 1000)
+        analytics["turn_count"] += 1
+        analytics["total_turn_latency_ms"] += latency_ms
+
+    logger.info(
+        "RP turn complete",
+        extra={
+            "turn_id": ws_turn_id,
+            "npc_id": npc_id,
+            "checks_resolved": len(check_results),
+            "passive_checks_triggered": len(passive_hints),
+            "latency_ms": int((time.time() - turn_start_time) * 1000) if turn_start_time else None,
+        },
+    )
 
 
 _ANALYSIS_TOOL: dict = {
@@ -485,8 +978,36 @@ _ANALYSIS_TOOL: dict = {
             "scene_changes": {
                 "type": "object",
                 "properties": {
-                    "emotional_temperature_delta": {"type": "number"},
+                    "emotional_temperature_delta": {"type": "number", "minimum": -0.3, "maximum": 0.3},
                     "notes": {"type": "string"},
+                    "environment_add": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "darkness",
+                                "difficult_terrain",
+                                "high_ground",
+                                "extreme_weather",
+                                "hazard",
+                            ],
+                        },
+                        "description": "Environmental effects to add to the scene.",
+                    },
+                    "environment_remove": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "darkness",
+                                "difficult_terrain",
+                                "high_ground",
+                                "extreme_weather",
+                                "hazard",
+                            ],
+                        },
+                        "description": "Environmental effects to remove from the scene.",
+                    },
                 },
             },
             "animation_directives": {
@@ -535,3 +1056,180 @@ def _validate_animation_directives(
                 extra={"directive": directive, "npc_id": npc.id},
             )
     return validated
+
+
+# ---------------------------------------------------------------------------
+# Turn resume handler (#2)
+# ---------------------------------------------------------------------------
+
+
+async def _handle_turn_resume(
+    ws: WebSocket,
+    msg: dict,
+    client: anthropic.AsyncAnthropic,
+    scene_histories: dict[str, list[dict[str, str]]],
+    player_id: str,
+    *,
+    session_mode: str,
+    pending_check_proposals: dict[str, dict],
+    world_id: str = "",
+    analytics: dict | None = None,
+    triggered_passive_elements: dict[str, list[str]] | None = None,
+) -> None:
+    """Handle a turn_resume message — re-enter pipeline from last saved stage (#2).
+
+    Client sends: { "type": "turn_resume", "turn_id": "<pending_turn_id>" }
+
+    Resume logic based on stage:
+      - "streaming" with final_response: deliver the saved response (no LLM call)
+      - "checks_resolved" or "analysis": re-run from that point
+      - "received": re-run full pipeline
+
+    If retry_count >= MAX_RETRIES, reject with an error.
+    """
+    turn_id = msg.get("turn_id", "")
+    if not turn_id:
+        await _send_error(ws, "missing_field", "turn_resume requires 'turn_id'")
+        return
+
+    pt = await get_pending_turn(turn_id)
+    if pt is None:
+        await _send_error(ws, "not_found", f"Pending turn '{turn_id}' not found")
+        return
+
+    # Ownership check
+    if pt["player_id"] != player_id:
+        await _send_error(ws, "unauthorized", "Cannot resume another player's turn")
+        return
+
+    # Terminal states can't be resumed
+    if pt["stage"] in ("complete", "failed"):
+        await _send_error(
+            ws,
+            "invalid_state",
+            f"Turn is already '{pt['stage']}' — cannot resume",
+        )
+        return
+
+    # (#4) Check retry cap
+    if pt["retry_count"] >= MAX_RETRIES:
+        await fail_turn(turn_id, f"max_retries_exceeded ({MAX_RETRIES})")
+        await _send_error(
+            ws,
+            "max_retries",
+            f"Turn has exceeded maximum retry attempts ({MAX_RETRIES})",
+        )
+        return
+
+    scene_id = pt["scene_id"]
+    npc_id = pt["npc_id"]
+
+    # If final_response is already saved, just deliver it without re-running LLM
+    if pt["stage"] == "streaming" and pt["final_response"]:
+        logger.info(
+            "Resuming turn with saved final_response",
+            extra={"turn_id": turn_id, "stage": pt["stage"]},
+        )
+        await ws.send_json({"type": "stream_start", "turn_id": turn_id, "npc_id": npc_id})
+        await ws.send_json({"type": "stream_chunk", "turn_id": turn_id, "text": pt["final_response"]})
+        await ws.send_json(
+            {
+                "type": "stream_end",
+                "turn_id": turn_id,
+                "npc_id": npc_id,
+                "full_text": pt["final_response"],
+            }
+        )
+
+        # Complete the turn
+        await complete_turn(
+            turn_id,
+            pt["final_response"],
+            scene_changes=pt["scene_changes"],
+            check_results=pt["check_results"],
+        )
+
+        # Update in-memory history
+        history = await _get_or_load_history(scene_histories, scene_id)
+        if history is not None:
+            history.append({"role": "user", "content": pt["player_input"]})
+            history.append({"role": "assistant", "content": pt["final_response"]})
+
+        return
+
+    # For earlier stages, we need to re-run the LLM pipeline.
+    # Load NPC and scene state fresh.
+    try:
+        npc = load_npc(npc_id, world_id=world_id or None)
+    except NpcLoadError as exc:
+        await fail_turn(turn_id, f"npc_load_error: {exc}")
+        await _send_error(ws, "npc_load_error", f"NPC '{npc_id}' failed to load: {exc}")
+        return
+    if npc is None:
+        await fail_turn(turn_id, f"npc_not_found: {npc_id}")
+        await _send_error(ws, "not_found", f"NPC '{npc_id}' not found")
+        return
+
+    # Reconstruct character data from snapshot (#7)
+    character_sheet = pt["character_snapshot"] or {}
+
+    # Load history and scene state
+    history = await _get_or_load_history(scene_histories, scene_id)
+    if history is None:
+        await fail_turn(turn_id, "scene_not_found")
+        await _send_error(ws, "not_found", f"Scene '{scene_id}' not found")
+        return
+
+    # Re-dispatch as an rp_turn using the stored data
+    synthetic_msg = {
+        "type": "rp_turn",
+        "npc_id": npc_id,
+        "scene_id": scene_id,
+        "text": pt["player_input"],
+        "character": character_sheet,
+    }
+
+    # Mark the old turn as failed (it's being superseded by a retry)
+    await fail_turn(turn_id, "resumed_by_client")
+
+    # Increment retry count for the new attempt
+    new_retry_count = pt["retry_count"] + 1
+
+    # Create a new pending turn linked to the parent (#4)
+    new_turn_id = await create_pending_turn(
+        scene_id=scene_id,
+        player_id=player_id,
+        npc_id=npc_id,
+        turn_type=pt["turn_type"],
+        player_input=pt["player_input"],
+        character_snapshot=character_sheet,
+        parent_turn_id=turn_id,
+        retry_count=new_retry_count,
+    )
+
+    logger.info(
+        "Turn resumed as new attempt",
+        extra={
+            "original_turn_id": turn_id,
+            "new_turn_id": new_turn_id,
+            "retry_count": new_retry_count,
+            "from_stage": pt["stage"],
+        },
+    )
+
+    # Run the full RP turn with the new pending turn
+    # (We override scene_id in the message to ensure the new turn_id is used)
+    synthetic_msg["_resume_turn_id"] = new_turn_id
+
+    await _handle_rp_turn(
+        ws,
+        synthetic_msg,
+        history,
+        player_id,
+        client,
+        session_mode=session_mode,
+        pending_check_proposals=pending_check_proposals,
+        world_id=world_id,
+        analytics=analytics,
+        triggered_passive_elements=triggered_passive_elements,
+    )

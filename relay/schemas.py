@@ -5,10 +5,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Shared sub-models
 # ---------------------------------------------------------------------------
+
 
 class ConditionEntry(BaseModel):
     condition_id: str
@@ -27,6 +27,11 @@ class CompanionEntry(BaseModel):
     npc_id: str
     behavior_type: Literal["aggressive", "supportive", "defensive"]
     loyalty_strain: int = Field(ge=0)
+    hp_current: int = Field(ge=0)
+    hp_max: int = Field(ge=1)
+    conditions: list[str] = Field(default_factory=list)
+    exhaustion_level: int = Field(ge=0, le=6, default=0)
+    active: bool = True
 
 
 class ResourceEntry(BaseModel):
@@ -37,6 +42,7 @@ class ResourceEntry(BaseModel):
 # ---------------------------------------------------------------------------
 # CharacterSheet
 # ---------------------------------------------------------------------------
+
 
 class CharacterSheet(BaseModel):
     id: str
@@ -72,6 +78,7 @@ class CharacterSheet(BaseModel):
 # ---------------------------------------------------------------------------
 # NPC Personality sub-models
 # ---------------------------------------------------------------------------
+
 
 class NpcGoals(BaseModel):
     immediate: list[str] = Field(min_length=1)
@@ -173,6 +180,7 @@ class CompanionData(BaseModel):
 # NpcPersonality
 # ---------------------------------------------------------------------------
 
+
 class NpcPersonality(BaseModel):
     id: str
     world_id: str
@@ -220,6 +228,7 @@ class NpcPersonality(BaseModel):
 # Ability
 # ---------------------------------------------------------------------------
 
+
 class AbilityCost(BaseModel):
     resource_type: str
     amount: int = Field(ge=0)
@@ -255,6 +264,7 @@ class Ability(BaseModel):
 # Item
 # ---------------------------------------------------------------------------
 
+
 class Item(BaseModel):
     id: str
     world: str
@@ -267,5 +277,68 @@ class Item(BaseModel):
     binding: Literal["unbound", "bind_on_equip", "bind_on_acquire"]
     unique: bool
     stats: dict | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+# ---------------------------------------------------------------------------
+# WorldConfig sub-models
+# ---------------------------------------------------------------------------
+
+
+class SpecialisationPath(BaseModel):
+    id: str
+    world: str
+    display_name: str
+    path_archetype: Literal["scholar", "balanced", "martial", "tank"]
+    hit_die: Literal[6, 8, 10, 12]
+    saving_throw_proficiencies: list[str] = Field(min_length=2, max_length=2)
+    primary_ability_scores: list[str] = Field(min_length=1, max_length=2)
+    available_skill_proficiencies: list[str]
+    description: str
+
+    model_config = {"extra": "forbid"}
+
+
+class RestRules(BaseModel):
+    short_rest_hp_percent: float
+    short_rest_hit_dice_formula: str
+    long_rest_hp_percent: float
+    long_rest_exhaustion_reduction: int
+
+    model_config = {"extra": "forbid"}
+
+
+class EconomyConfig(BaseModel):
+    sell_back_ratio: float = Field(ge=0, le=1)
+    earning_rates: dict | None = None
+    price_ranges: dict | None = None
+    crafting_margin_target: float | None = None
+    transport_fare_ranges: dict | None = None
+
+    model_config = {"extra": "allow"}
+
+
+# ---------------------------------------------------------------------------
+# WorldConfig
+# ---------------------------------------------------------------------------
+
+
+class WorldConfig(BaseModel):
+    world_id: str
+    display_name: str
+    content_rating: Literal["moderate", "mature"]
+    rp_system_prompt_addendum: str
+    traversal_config: list[str]
+    currency_id: str
+    ability_score_map: dict[str, str]
+    equipment_slots: list[str] | None = None
+    resource_model: dict | None = None
+    time_of_day_cycle: dict | None = None
+    max_active_companions: int = Field(ge=1, default=1)
+    specialisation_paths: list[SpecialisationPath] = Field(min_length=1)
+    rest_rules: RestRules
+    economy_config: EconomyConfig
+    environmental_effects_registry: list[dict] | None = None
 
     model_config = {"extra": "forbid"}
