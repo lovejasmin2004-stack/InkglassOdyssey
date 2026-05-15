@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "Bash(cd \"C:\\\\Users\\\\lovej\\\\Documents\\\\Inkglass OdysseyV1\\\\.claude\\\\worktrees\\\\naughty-hofstadter-b733c8\" && find relay -name \"*.py\" -not -path \"*__pycache__*\" | sort 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\lovej\\\\Documents\\\\Inkglass OdysseyV1\\\\.claude\\\\worktrees\\\\naughty-hofstadter-b733c8\" && find schemas -name \"*.json\" | sort 2>&1)"
+    ]
+  }
+}

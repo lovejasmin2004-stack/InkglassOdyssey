@@ -1,0 +1,36 @@
+[project]
+name = "inkglass-relay"
+version = "0.1.0"
+description = "AI-narrative relay service for Inkglass Odyssey"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["relay/tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "SIM",   # flake8-simplify
+    "T20",   # flake8-print
+    "RUF",   # ruff-specific
+]
+ignore = [
+    "E501",  # line length handled by formatter
+    "B008",  # function call in default arg (FastAPI Depends pattern)
+    "SIM117",  # nested with -- often needed when inner context uses outer variable
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["relay"]

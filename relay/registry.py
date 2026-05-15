@@ -29,12 +29,14 @@ ABILITIES: tuple[str, ...] = (
 SKILL_ABILITY: dict[str, str] = {
     "athletics": "strength",
     "acrobatics": "dexterity",
+    "sleight_of_hand": "dexterity",
     "stealth": "dexterity",
     "arcana": "intelligence",
     "history": "intelligence",
     "investigation": "intelligence",
     "nature": "intelligence",
     "religion": "intelligence",
+    "animal_handling": "wisdom",
     "medicine": "wisdom",
     "perception": "wisdom",
     "insight": "wisdom",
@@ -53,6 +55,12 @@ SKILLS: frozenset[str] = frozenset(SKILL_ABILITY.keys())
 
 PASSIVE_SKILLS: tuple[str, ...] = ("perception", "insight", "investigation")
 """Skills evaluated as passive checks against hidden scene elements (Invariant #22)."""
+
+
+SOCIAL_SKILLS: frozenset[str] = frozenset(
+    {"intimidation", "persuasion", "deception", "performance"}
+)
+"""Skills affected by the charmed condition's social advantage."""
 
 
 # ---------------------------------------------------------------------------
@@ -212,12 +220,24 @@ CONDITIONS: dict[str, ConditionDef] = {
 """Standard D&D-inspired conditions. Inkglass-specific conditions can extend this dict."""
 
 
+EXHAUSTION_MAX = 6
+
+
 def exhaustion_def(level: int) -> ConditionDef:
-    """Exhaustion is graduated 1-6; level 1+ imposes disadvantage on checks."""
-    level = max(1, min(6, level))
+    """Exhaustion is graduated 1-6.
+
+    Level 1+: disadvantage on ability checks.
+    Level 3+: disadvantage on attack rolls and saving throws.
+    Level 5+: speed zero.
+    Level 6: character retired (handled by death_state module).
+    """
+    level = max(1, min(EXHAUSTION_MAX, level))
     return ConditionDef(
         f"exhaustion_{level}",
         disadvantage_on_all_checks=True,
+        disadvantage_on_attacks=level >= 3,
+        disadvantage_on_saves=("strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma") if level >= 3 else (),
+        speed_zero=level >= 5,
     )
 
 

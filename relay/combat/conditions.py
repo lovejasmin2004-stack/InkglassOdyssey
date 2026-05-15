@@ -21,6 +21,7 @@ from typing import Any
 
 from relay.registry import (
     CONDITIONS,
+    EXHAUSTION_MAX,
     ConditionDef,
     DurationUnit,
     SourceType,
@@ -31,7 +32,12 @@ logger = logging.getLogger(__name__)
 
 ConditionInstance = dict[str, Any]
 """Runtime shape: {instance_id, condition_id, duration_remaining, duration_unit,
-   rider_of, source_id, source_type}. Validated by schemas.ConditionEntry."""
+   rider_of, source, source_type}. Validated by schemas.ConditionEntry."""
+
+
+# ---------------------------------------------------------------------------
+# Registry lookup
+# ---------------------------------------------------------------------------
 
 
 def _condition_def(condition_id: str) -> ConditionDef | None:
@@ -43,6 +49,11 @@ def _condition_def(condition_id: str) -> ConditionDef | None:
             return None
         return exhaustion_def(level)
     return CONDITIONS.get(condition_id)
+
+
+# ---------------------------------------------------------------------------
+# Instance lifecycle — pure functions, return new lists
+# ---------------------------------------------------------------------------
 
 
 def _new_instance(
@@ -110,36 +121,50 @@ def add_condition(
 
 def remove_condition(
     conditions: list[ConditionInstance],
+    condition_id_positional: str | None = None,
     *,
     instance_id: str | None = None,
     condition_id: str | None = None,
 ) -> list[ConditionInstance]:
-    """Remove a condition (and any of its riders) by instance_id or condition_id.
+    """Remove a condition by instance_id or condition_id.
 
-    instance_id is preferred (unique). condition_id removes the first match and
-    is appropriate when callers don't track instance IDs (e.g., "cure poison").
+    Supports both calling conventions:
+      remove_condition(conditions, "poisoned")          # positional
+      remove_condition(conditions, condition_id="...")   # keyword
+      remove_condition(conditions, instance_id="...")    # by unique instance
+
+    When removing by condition_id, all matching parent instances and their
+    riders are removed. When removing by instance_id, only that instance
+    and its riders.
     """
-    if instance_id is None and condition_id is None:
+    cid = condition_id_positional or condition_id
+    if instance_id is None and cid is None:
         return list(conditions)
 
-    target_instance_id: str | None = instance_id
-    if target_instance_id is None:
-        for cond in conditions:
-            if (
-                cond.get("condition_id") == condition_id
-                and cond.get("rider_of") is None
-            ):
-                target_instance_id = cond["instance_id"]
-                break
-        if target_instance_id is None:
-            return list(conditions)
+    if instance_id is not None:
+        return [
+            c
+            for c in conditions
+            if c.get("instance_id") != instance_id
+            and c.get("rider_of") != instance_id
+        ]
 
-    return [
-        c
-        for c in conditions
-        if c["instance_id"] != target_instance_id
-        and c.get("rider_of") != target_instance_id
-    ]
+    removed_instance_ids: set[str] = set()
+    result: list[ConditionInstance] = []
+    for c in conditions:
+        if c.get("condition_id") == cid and c.get("rider_of") is None:
+            iid = c.get("instance_id")
+            if iid:
+                removed_instance_ids.add(iid)
+            continue
+        result.append(c)
+
+    if removed_instance_ids:
+        result = [
+            c for c in result if c.get("rider_of") not in removed_instance_ids
+        ]
+
+    return result
 
 
 def tick_durations(
@@ -181,6 +206,91 @@ def tick_durations(
     return [c for c in next_state if c.get("rider_of") not in expired_instance_ids]
 
 
+# ---------------------------------------------------------------------------
+# Legacy API — backward-compatible wrappers for existing endpoints/tests
+# ---------------------------------------------------------------------------
+
+
+def apply_condition(
+    conditions: list[ConditionInstance],
+    condition_id: str,
+    duration_turns: int | None = None,
+    expiry_turn: int | None = None,
+    source: str = "",
+) -> list[ConditionInstance]:
+    """Add a condition with legacy duration_turns/expiry_turn arguments.
+
+    Wraps add_condition, preserving old-style fields for callers that inspect
+    duration_turns or expiry_turn directly.
+    """
+    if duration_turns is None and expiry_turn is None:
+        logger.warning(
+            "Condition must have duration or expiry",
+            extra={"condition_id": condition_id},
+        )
+        return list(conditions)
+
+    result = add_condition(
+        conditions,
+        condition_id,
+        source=source,
+        duration_remaining=duration_turns,
+        duration_unit="turns",
+    )
+
+    if len(result) > len(conditions):
+        parent = result[len(conditions)]
+        if duration_turns is not None:
+            parent["duration_turns"] = duration_turns
+        if expiry_turn is not None:
+            parent["expiry_turn"] = expiry_turn
+
+    return result
+
+
+def tick_conditions(
+    conditions: list[ConditionInstance],
+    current_turn: int,
+) -> list[ConditionInstance]:
+    """Advance conditions by one turn using legacy duration_turns/expiry_turn.
+
+    Handles both old-style fields (duration_turns, expiry_turn) and new-style
+    (duration_remaining + duration_unit).
+    """
+    remaining: list[ConditionInstance] = []
+    for cond in conditions:
+        if (
+            cond.get("expiry_turn") is not None
+            and current_turn >= cond["expiry_turn"]
+        ):
+            logger.info(
+                "Condition expired",
+                extra={"condition_id": cond.get("condition_id")},
+            )
+            continue
+
+        updated = dict(cond)
+        dt = updated.get("duration_turns")
+        if dt is not None:
+            dt -= 1
+            if dt <= 0:
+                logger.info(
+                    "Condition duration ended",
+                    extra={"condition_id": cond.get("condition_id")},
+                )
+                continue
+            updated["duration_turns"] = dt
+            updated["duration_remaining"] = dt
+
+        remaining.append(updated)
+    return remaining
+
+
+# ---------------------------------------------------------------------------
+# Query helpers
+# ---------------------------------------------------------------------------
+
+
 def has_condition(conditions: list[ConditionInstance], condition_id: str) -> bool:
     """True if any active instance has this condition_id (parent or rider)."""
     return any(c.get("condition_id") == condition_id for c in conditions)
@@ -193,3 +303,106 @@ def is_incapacitated(conditions: list[ConditionInstance]) -> bool:
         if cdef and cdef.incapacitated:
             return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Exhaustion helpers
+# ---------------------------------------------------------------------------
+
+
+def increment_exhaustion(current_level: int) -> int:
+    """Increment exhaustion by 1, capped at EXHAUSTION_MAX."""
+    return min(current_level + 1, EXHAUSTION_MAX)
+
+
+def reduce_exhaustion(current_level: int, amount: int = 1) -> int:
+    """Reduce exhaustion (e.g., after long rest). Minimum 0."""
+    return max(0, current_level - amount)
+
+
+# ---------------------------------------------------------------------------
+# Combat modifier queries — registry-driven
+# ---------------------------------------------------------------------------
+
+
+def get_attack_modifiers(
+    conditions: list[ConditionInstance],
+    exhaustion_level: int,
+    *,
+    source_visible: bool = True,
+) -> dict:
+    """Determine advantage/disadvantage on the character's own attacks."""
+    has_disadvantage = False
+
+    for cond in conditions:
+        cid = cond.get("condition_id", "")
+        cdef = _condition_def(cid)
+        if cdef is None:
+            continue
+        if cdef.disadvantage_on_attacks:
+            if cid == "frightened" and not source_visible:
+                continue
+            has_disadvantage = True
+
+    if exhaustion_level >= 3:
+        has_disadvantage = True
+
+    return {"attack_disadvantage": has_disadvantage}
+
+
+def get_defense_modifiers(
+    conditions: list[ConditionInstance],
+    *,
+    attack_range: str = "melee",
+) -> dict:
+    """Determine if attackers get advantage/disadvantage against this target.
+
+    Prone is range-dependent: melee advantage, ranged disadvantage.
+    """
+    attackers_have_advantage = False
+    attackers_have_disadvantage = False
+
+    for cond in conditions:
+        cid = cond.get("condition_id", "")
+        cdef = _condition_def(cid)
+        if cdef is None:
+            continue
+        if cid == "prone":
+            if attack_range == "melee":
+                attackers_have_advantage = True
+            else:
+                attackers_have_disadvantage = True
+        elif cdef.grants_advantage_to_attackers:
+            attackers_have_advantage = True
+
+    return {
+        "attackers_have_advantage": attackers_have_advantage,
+        "attackers_have_disadvantage": attackers_have_disadvantage,
+    }
+
+
+def get_save_modifiers(
+    conditions: list[ConditionInstance],
+    exhaustion_level: int,
+    save_type: str,
+) -> dict:
+    """Determine advantage/disadvantage and auto-fail on saving throws."""
+    auto_fail = False
+    has_disadvantage = False
+
+    for cond in conditions:
+        cid = cond.get("condition_id", "")
+        cdef = _condition_def(cid)
+        if cdef is None:
+            continue
+        if cdef.auto_fail_strength_saves and save_type == "strength":
+            auto_fail = True
+        if cdef.auto_fail_dexterity_saves and save_type == "dexterity":
+            auto_fail = True
+        if save_type in cdef.disadvantage_on_saves:
+            has_disadvantage = True
+
+    if exhaustion_level >= 3:
+        has_disadvantage = True
+
+    return {"auto_fail": auto_fail, "save_disadvantage": has_disadvantage}

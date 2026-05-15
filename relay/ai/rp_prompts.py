@@ -1,11 +1,21 @@
-"""Prompt construction for RP mode (two-call turn flow)."""
+"""Prompt construction for RP mode (two-call turn flow).
+
+Prompt caching tiers (CLAUDE.md §2.3):
+ - Tier 1 (static, cache aggressively): system prompt, NPC personality
+ - Tier 2 (session-stable): scene context, NPC memory summary
+ - Tier 3 (dynamic, never cached): player input, check results, turn-specific data
+"""
 from __future__ import annotations
 
 from relay.schemas import NpcPersonality
 
 
-def build_rp_system_prompt(npc: NpcPersonality) -> str:
-    """Static system prompt for RP mode. Cached (Tier 1)."""
+def build_rp_system_prompt(npc: NpcPersonality) -> list[dict]:
+    """Build the system prompt for RP mode as Anthropic cache-control blocks.
+
+    Returns a list of content blocks with cache_control markers so the
+    Anthropic API caches the static NPC personality across turns (Tier 1).
+    """
     examples = "\n\n".join(
         f"[{ex.context_tag}]\n"
         f"Player: {ex.player_input}\n"
@@ -24,7 +34,7 @@ def build_rp_system_prompt(npc: NpcPersonality) -> str:
     knows = "\n".join(f"  - {k}" for k in npc.knowledge_boundaries.knows)
     does_not_know = "\n".join(f"  - {k}" for k in npc.knowledge_boundaries.does_not_know)
 
-    return f"""You are {npc.name}, {npc.role} in the world of {npc.world_id}.
+    prompt_text = f"""You are {npc.name}, {npc.role} in the world of {npc.world_id}.
 You respond in freeform prose RP format — descriptive narrative with dialogue, body language, and internal texture.
 
 PERSONALITY
@@ -61,6 +71,15 @@ RULES
 - Do not decide mechanical outcomes (damage, healing amounts, check results). Those are resolved by the game system.
 """
 
+    # Single block with cache_control — the entire NPC system prompt is Tier 1 (static).
+    return [
+        {
+            "type": "text",
+            "text": prompt_text,
+            "cache_control": {"type": "ephemeral"},
+        },
+    ]
+
 
 ANALYSIS_INSTRUCTION = """Analyse the player's prose and return a JSON object with exactly these fields:
 
@@ -76,7 +95,9 @@ ANALYSIS_INSTRUCTION = """Analyse the player's prose and return a JSON object wi
   ],
   "scene_changes": {
     "emotional_temperature_delta": <float -0.3 to 0.3, how the mood shifted>,
-    "notes": "<brief scene observation>"
+    "notes": "<brief scene observation>",
+    "environment_add": ["<effect_id to add -- e.g. darkness, difficult_terrain, extreme_weather>"],
+    "environment_remove": ["<effect_id to remove -- e.g. darkness>"]
   },
   "animation_directives": [
     {
@@ -97,6 +118,7 @@ RULES FOR ANALYSIS:
 - Do NOT set both advantage and disadvantage on the same check -- if both apply, omit both (they cancel).
 - animation_directives must use IDs from the NPC's animation_profile or generic verbs.
 - draft_response is full prose -- it will be refined in the second call with check results.
+- environment_add / environment_remove: only propose environmental changes when the narrative warrants it (e.g. a lantern being extinguished adds "darkness", clearing rubble removes "difficult_terrain"). Valid effects: darkness, difficult_terrain, high_ground, extreme_weather, hazard. Leave arrays empty if no changes.
 """
 
 
@@ -118,8 +140,21 @@ def build_final_prose_messages(
     draft_response: str,
     check_results: list[dict],
     history: list[dict[str, str]],
+    *,
+    passive_hints: list[dict] | None = None,
+    npc_memory_summary: str | None = None,
 ) -> list[dict[str, str]]:
-    """Build the message list for the second LLM call (final prose with check results)."""
+    """Build the message list for the second LLM call (final prose with check results).
+
+    Parameters
+    ----------
+    passive_hints:
+        Triggered passive checks with hint text to weave into the response.
+    npc_memory_summary:
+        Summary of what the NPC remembers about this player from earlier in the
+        session (injected as context for continuity).
+    """
+    # Build check results section
     if check_results:
         def _format_check(cr: dict) -> str:
             mode = cr.get("roll_mode", "straight")
@@ -131,29 +166,57 @@ def build_final_prose_messages(
             )
 
         results_text = "\n".join(_format_check(cr) for cr in check_results)
-        instruction = f"""The player wrote:
+        checks_section = f"""
+The following checks were resolved by the game system:
+{results_text}
+
+"""
+    else:
+        checks_section = "\nNo checks were needed.\n"
+
+    # Build passive hints section (#10)
+    if passive_hints:
+        hints_text = "\n".join(
+            f"- The player passively noticed: {h['hint']}" for h in passive_hints if h.get("hint")
+        )
+        passive_section = f"""
+The player's passive awareness revealed the following (weave naturally into your response):
+{hints_text}
+
+"""
+    else:
+        passive_section = ""
+
+    # Build NPC memory section (#3)
+    if npc_memory_summary:
+        memory_section = f"""
+CONTEXT FROM EARLIER IN THIS SESSION (what you remember):
+{npc_memory_summary}
+
+"""
+    else:
+        memory_section = ""
+
+    # Assemble the instruction
+    if check_results:
+        instruction = f"""{memory_section}The player wrote:
 {player_prose}
 
 Your draft response was:
 {draft_response}
-
-The following checks were resolved by the game system:
-{results_text}
-
-Now write your FINAL in-character prose response incorporating these check results naturally.
+{checks_section}{passive_section}Now write your FINAL in-character prose response incorporating these check results naturally.
 - If a check passed, the action succeeds. Describe the success.
 - If a check failed, the action doesn't fully succeed. Describe the failure or partial success in character.
 - Do NOT mention dice, DCs, or game mechanics in your prose.
 - Write in the same voice and style as your draft.
 """
     else:
-        instruction = f"""The player wrote:
+        instruction = f"""{memory_section}The player wrote:
 {player_prose}
 
 Your draft response was:
 {draft_response}
-
-No checks were needed. Write your FINAL in-character prose response.
+{checks_section}{passive_section}Write your FINAL in-character prose response.
 You may refine the draft — keep the same voice and intent, but polish as needed.
 """
 
