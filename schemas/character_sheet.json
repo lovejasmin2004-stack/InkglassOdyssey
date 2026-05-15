@@ -47,10 +47,21 @@
         "required": ["condition_id", "source"],
         "additionalProperties": false,
         "properties": {
-          "condition_id":    { "type": "string" },
-          "duration_turns":  { "type": "integer", "minimum": 0 },
-          "expiry_turn":     { "type": "integer", "minimum": 0 },
-          "source":          { "type": "string" }
+          "condition_id":       { "type": "string" },
+          "instance_id":        { "type": "string" },
+          "duration_turns":     { "type": "integer", "minimum": 0 },
+          "expiry_turn":        { "type": "integer", "minimum": 0 },
+          "duration_remaining": { "type": ["integer", "null"], "minimum": 0 },
+          "duration_unit": {
+            "type": "string",
+            "enum": ["rounds", "turns", "minutes", "until_long_rest", "permanent"]
+          },
+          "rider_of":           { "type": ["string", "null"] },
+          "source":             { "type": "string" },
+          "source_type": {
+            "type": "string",
+            "enum": ["spell", "feature", "environment", "item", "scenario", "other"]
+          }
         }
       }
     },

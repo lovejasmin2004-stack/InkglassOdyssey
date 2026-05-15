@@ -1,20 +1,80 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
+
+from relay.registry import DAMAGE_TYPES
+
+
+# ---------------------------------------------------------------------------
+# Reusable field types
+# ---------------------------------------------------------------------------
+
+_DICE_FORMULA_RE = re.compile(r"^\d+d\d+([+-]\d+)?$|^[+-]?\d+$")
+
+DiceFormulaStr = Annotated[
+    str,
+    StringConstraints(pattern=_DICE_FORMULA_RE.pattern, strip_whitespace=True),
+]
+"""'NdM', 'NdM+K', 'NdM-K', or flat 'K'. Validated by combat.damage.parse_formula."""
+
+DamageType = Literal[
+    "bludgeoning",
+    "piercing",
+    "slashing",
+    "fire",
+    "cold",
+    "lightning",
+    "thunder",
+    "acid",
+    "poison",
+    "necrotic",
+    "radiant",
+    "psychic",
+    "force",
+]
+"""Canonical damage type IDs; mirrors relay.registry.DAMAGE_TYPES."""
+
+assert set(DamageType.__args__) == set(DAMAGE_TYPES), "DamageType / DAMAGE_TYPES drift"
 
 
 # ---------------------------------------------------------------------------
 # Shared sub-models
 # ---------------------------------------------------------------------------
 
+
 class ConditionEntry(BaseModel):
+    """A condition instance on a character / combatant.
+
+    Schema mirrors Foundry's ActiveEffect pattern: a static definition lives in
+    relay.registry.CONDITIONS; instances carry duration and provenance.
+    """
+
     condition_id: str
-    duration_turns: int | None = None
-    expiry_turn: int | None = None
+    instance_id: str | None = None
+    duration_remaining: int | None = Field(default=None, ge=0)
+    duration_unit: Literal[
+        "rounds", "turns", "minutes", "until_long_rest", "permanent"
+    ] = "turns"
+    rider_of: str | None = None
     source: str
+    source_type: Literal[
+        "spell", "feature", "environment", "item", "scenario", "other"
+    ] = "other"
+
+    # Legacy fields retained for backward compatibility with stored JSON.
+    duration_turns: int | None = Field(default=None, ge=0)
+    expiry_turn: int | None = Field(default=None, ge=0)
+
+
+class DamageTermEntry(BaseModel):
+    """One typed damage term. Multi-part damage is a list of these."""
+
+    formula: DiceFormulaStr
+    type: DamageType
 
 
 class InventoryEntry(BaseModel):
@@ -37,6 +97,7 @@ class ResourceEntry(BaseModel):
 # ---------------------------------------------------------------------------
 # CharacterSheet
 # ---------------------------------------------------------------------------
+
 
 class CharacterSheet(BaseModel):
     id: str
@@ -73,6 +134,7 @@ class CharacterSheet(BaseModel):
 # NPC Personality sub-models
 # ---------------------------------------------------------------------------
 
+
 class NpcGoals(BaseModel):
     immediate: list[str] = Field(min_length=1)
     long_term: list[str]
@@ -85,13 +147,17 @@ class NpcKnowledgeBoundaries(BaseModel):
 
 class NpcRelationship(BaseModel):
     npc_id: str
-    relationship_type: Literal["ally", "rival", "subordinate", "mentor", "family", "trading_partner", "unknown"]
+    relationship_type: Literal[
+        "ally", "rival", "subordinate", "mentor", "family", "trading_partner", "unknown"
+    ]
     description: str
 
 
 class NpcSecret(BaseModel):
     content: str
-    reveal_condition: Literal["relationship_threshold", "quest_flag", "check_type_and_dc", "never"]
+    reveal_condition: Literal[
+        "relationship_threshold", "quest_flag", "check_type_and_dc", "never"
+    ]
     secret_type: Literal["information", "identity"]
     reveal_threshold: int | None = None
     reveal_quest_flag: str | None = None
@@ -173,6 +239,7 @@ class CompanionData(BaseModel):
 # NpcPersonality
 # ---------------------------------------------------------------------------
 
+
 class NpcPersonality(BaseModel):
     id: str
     world_id: str
@@ -192,7 +259,9 @@ class NpcPersonality(BaseModel):
     relationships: list[NpcRelationship]
     secrets: list[NpcSecret] = Field(min_length=1)
     few_shot_examples: list[FewShotExample] = Field(min_length=2)
-    manipulation_resistance_examples: list[ManipulationResistanceExample] = Field(min_length=1)
+    manipulation_resistance_examples: list[ManipulationResistanceExample] = Field(
+        min_length=1
+    )
     animation_profile: AnimationProfile
     world_position: WorldPosition
     schedule: list[NpcScheduleEntry] | None = None
@@ -219,6 +288,7 @@ class NpcPersonality(BaseModel):
 # ---------------------------------------------------------------------------
 # Ability
 # ---------------------------------------------------------------------------
+
 
 class AbilityCost(BaseModel):
     resource_type: str
@@ -255,11 +325,14 @@ class Ability(BaseModel):
 # Item
 # ---------------------------------------------------------------------------
 
+
 class Item(BaseModel):
     id: str
     world: str
     name: str = Field(min_length=1)
-    type: Literal["weapon", "armour", "shield", "consumable", "material", "tool", "quest"]
+    type: Literal[
+        "weapon", "armour", "shield", "consumable", "material", "tool", "quest"
+    ]
     rarity: Literal["common", "uncommon", "rare", "legendary"]
     weight: float = Field(ge=0)
     value: int = Field(ge=0)

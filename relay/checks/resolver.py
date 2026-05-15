@@ -2,56 +2,30 @@
 
 Invariant #8: LLM is never authoritative over mechanical state.
 The LLM proposes checks; this module resolves them.
+
+Canonical skill, ability, and condition definitions live in relay.registry.
 """
+
 from __future__ import annotations
 
 import logging
 import random
 
+from relay.registry import (
+    CONDITIONS,
+    ENVIRONMENT_RULES,
+    PASSIVE_SKILLS,
+    SKILL_ABILITY,
+    SKILLS,
+    exhaustion_def,
+)
+
 logger = logging.getLogger(__name__)
 
-VALID_SKILLS = frozenset({
-    "athletics", "acrobatics", "stealth",
-    "arcana", "history", "investigation", "nature", "religion",
-    "medicine", "perception", "insight",
-    "intimidation", "persuasion", "deception", "performance",
-    "survival",
-})
-
-SKILL_ABILITY_MAP: dict[str, str] = {
-    "athletics": "strength",
-    "acrobatics": "dexterity",
-    "stealth": "dexterity",
-    "arcana": "intelligence",
-    "history": "intelligence",
-    "investigation": "intelligence",
-    "nature": "intelligence",
-    "religion": "intelligence",
-    "medicine": "wisdom",
-    "perception": "wisdom",
-    "insight": "wisdom",
-    "intimidation": "charisma",
-    "persuasion": "charisma",
-    "deception": "charisma",
-    "performance": "charisma",
-    "survival": "wisdom",
-}
-
-# Conditions that grant disadvantage on specific check categories.
-CONDITION_DISADVANTAGE: dict[str, list[str]] = {
-    "poisoned": list(VALID_SKILLS),  # disadvantage on all ability checks
-    "frightened": [],  # disadvantage on ability checks while source visible (handled by scene state)
-    "exhaustion_1": list(VALID_SKILLS),  # exhaustion level 1+: disadvantage on checks
-    "restrained": ["acrobatics", "athletics", "stealth"],
-}
-
-# Scene-state environmental effects that grant advantage/disadvantage.
-ENVIRONMENT_ADVANTAGE: dict[str, dict[str, str]] = {
-    "darkness": {"perception": "disadvantage"},
-    "difficult_terrain": {"acrobatics": "disadvantage", "stealth": "disadvantage"},
-    "high_ground": {},  # applies to ranged attacks, not skill checks
-    "extreme_weather": {"perception": "disadvantage", "survival": "disadvantage"},
-}
+# Re-export legacy names so existing imports keep working.
+VALID_SKILLS = SKILLS
+SKILL_ABILITY_MAP = SKILL_ABILITY
+PASSIVE_CHECK_SKILLS = PASSIVE_SKILLS
 
 _DC_MIN = 5
 _DC_MAX = 30
@@ -70,7 +44,10 @@ def validate_check(check: dict) -> dict:
     """Validate and clamp an LLM-proposed check. Never trust raw LLM values."""
     skill = check.get("skill", "").lower().strip()
     if skill not in VALID_SKILLS:
-        logger.warning("Invalid skill proposed, defaulting to perception", extra={"proposed": skill})
+        logger.warning(
+            "Invalid skill proposed, defaulting to perception",
+            extra={"proposed": skill},
+        )
         skill = "perception"
 
     dc = check.get("dc", 15)
@@ -94,6 +71,26 @@ def validate_check(check: dict) -> dict:
     }
 
 
+def _condition_disadvantage_on_skill(condition_id: str, skill: str) -> bool:
+    """True if a condition imposes disadvantage on this skill check.
+
+    Looks up the canonical registry; handles graduated exhaustion.
+    """
+    if condition_id.startswith("exhaustion_"):
+        try:
+            level = int(condition_id.removeprefix("exhaustion_"))
+        except ValueError:
+            return False
+        return exhaustion_def(level).disadvantage_on_all_checks
+
+    cdef = CONDITIONS.get(condition_id)
+    if cdef is None:
+        return False
+    if cdef.disadvantage_on_all_checks:
+        return True
+    return skill in cdef.disadvantage_on_skills
+
+
 def determine_roll_mode(
     *,
     proposed_advantage: bool,
@@ -115,22 +112,13 @@ def determine_roll_mode(
     if proposed_disadvantage:
         dis_count += 1
 
-    # Check active conditions for disadvantage
-    for cond in (conditions or []):
+    for cond in conditions or []:
         cond_id = cond.get("condition_id", "")
-
-        if cond_id == "poisoned":
-            dis_count += 1
-        elif cond_id == "frightened":
-            dis_count += 1
-        elif cond_id.startswith("exhaustion"):
-            dis_count += 1
-        elif cond_id == "restrained" and skill in CONDITION_DISADVANTAGE.get("restrained", []):
+        if _condition_disadvantage_on_skill(cond_id, skill):
             dis_count += 1
 
-    # Check environmental effects
-    for effect in (environmental_effects or []):
-        env_rules = ENVIRONMENT_ADVANTAGE.get(effect, {})
+    for effect in environmental_effects or []:
+        env_rules = ENVIRONMENT_RULES.get(effect, {})
         if skill in env_rules:
             if env_rules[skill] == "advantage":
                 adv_count += 1
@@ -226,6 +214,7 @@ def resolve_check(
 # Passive checks (Invariant #22)
 # ---------------------------------------------------------------------------
 
+
 def compute_passive_check(
     skill: str,
     ability_scores: dict[str, int],
@@ -237,7 +226,6 @@ def compute_passive_check(
     """Compute a passive check value: 10 + ability modifier + proficiency bonus.
 
     Disadvantage from conditions applies a -5 penalty (D&D 5e rule).
-    Advantage applies +5.
     """
     governing_ability = SKILL_ABILITY_MAP.get(skill, "wisdom")
     score = ability_scores.get(governing_ability, 10)
@@ -246,22 +234,14 @@ def compute_passive_check(
     prof = proficiency_bonus(level) if skill in skill_proficiencies else 0
     base = 10 + mod + prof
 
-    # Check conditions for disadvantage on this skill
-    has_disadvantage = False
-    for cond in (conditions or []):
-        cond_id = cond.get("condition_id", "")
-        if cond_id == "poisoned":
-            has_disadvantage = True
-        elif cond_id.startswith("exhaustion"):
-            has_disadvantage = True
-
+    has_disadvantage = any(
+        _condition_disadvantage_on_skill(cond.get("condition_id", ""), skill)
+        for cond in (conditions or [])
+    )
     if has_disadvantage:
         base -= 5
 
     return base
-
-
-PASSIVE_CHECK_SKILLS = ("perception", "insight", "investigation")
 
 
 def evaluate_passive_checks(
@@ -292,18 +272,23 @@ def evaluate_passive_checks(
 
         dc = element.get("dc", 15)
         passive_value = compute_passive_check(
-            skill, ability_scores, skill_proficiencies, level,
+            skill,
+            ability_scores,
+            skill_proficiencies,
+            level,
             conditions=conditions,
         )
 
         if passive_value >= dc:
-            triggered.append({
-                "element_id": element.get("id", ""),
-                "skill": skill,
-                "dc": dc,
-                "passive_value": passive_value,
-                "hint": element.get("hint", ""),
-            })
+            triggered.append(
+                {
+                    "element_id": element.get("id", ""),
+                    "skill": skill,
+                    "dc": dc,
+                    "passive_value": passive_value,
+                    "hint": element.get("hint", ""),
+                }
+            )
             logger.info(
                 "Passive check triggered",
                 extra={
