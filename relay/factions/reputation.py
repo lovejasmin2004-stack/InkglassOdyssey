@@ -79,9 +79,7 @@ def apply_standing_change(
         Map of faction_id to faction definition (must have allied_factions,
         rival_factions; optionally reputation_thresholds for custom tier
         boundaries).  If None, no propagation occurs.
-
-        TODO(Phase 2): Load from server-side content files (factions/{world_id}/)
-        instead of accepting from the client request body (Invariant #1).
+        Loaded from server-side content files via world.content_loader.
 
     Returns
     -------

@@ -1,0 +1,6 @@
+{
+  "id": "merchant_guild",
+  "name": "Merchant Guild",
+  "allied_factions": ["artisan_collective"],
+  "rival_factions": ["thieves_den"]
+}

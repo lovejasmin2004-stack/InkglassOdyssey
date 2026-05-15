@@ -956,6 +956,7 @@ class TestQuestReward:
         from relay.economy.wallet import quest_reward
 
         db = AsyncMock()
+        db.add = MagicMock()
         char = MagicMock()
         char.wallet = {"gold": 100}
         char.player_id = "p1"

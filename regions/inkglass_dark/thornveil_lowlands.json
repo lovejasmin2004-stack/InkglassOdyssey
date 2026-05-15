@@ -1,0 +1,14 @@
+{
+  "id": "thornveil_lowlands",
+  "world_id": "inkglass_dark",
+  "name": "Thornveil Lowlands",
+  "description": "Flat pastureland cut by thorn hedges and a single muddy road. Bandit territory between the Merchant Quarter and the outer settlements.",
+  "connections": ["merchant_quarter", "outer_settlements"],
+  "environmental_effects": [],
+  "gathering_nodes": [
+    { "item_id": "camphor_resin", "skill": "survival", "dc": 10 },
+    { "item_id": "moonpetal", "skill": "nature", "dc": 14 }
+  ],
+  "fauna": ["thornveil_hare", "mud_viper"],
+  "dominant_faction": "merchant_guild"
+}

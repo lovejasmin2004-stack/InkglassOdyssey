@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "recipe",
+  "title": "Recipe",
+  "type": "object",
+  "required": ["id", "output_item_id", "input_materials", "required_skill", "skill_dc", "level_requirement"],
+  "additionalProperties": false,
+  "properties": {
+    "id":              { "type": "string" },
+    "name":            { "type": "string", "minLength": 1 },
+    "output_item_id":  { "type": "string" },
+    "output_quantity": { "type": "integer", "minimum": 1, "default": 1 },
+    "input_materials": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["item_id", "quantity"],
+        "additionalProperties": false,
+        "properties": {
+          "item_id":  { "type": "string" },
+          "quantity": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "required_skill": { "type": "string" },
+    "skill_dc":       { "type": "integer", "minimum": 1, "maximum": 30 },
+    "level_requirement": { "type": "integer", "minimum": 1, "maximum": 20 },
+    "required_station_type": { "type": ["string", "null"] }
+  }
+}

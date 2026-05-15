@@ -143,11 +143,16 @@ def is_incapable_of_checks(conditions: list[dict] | None = None) -> bool:
     """Return True if active conditions prevent skill checks entirely.
 
     Stunned/incapacitated: cannot take actions, auto-fail voluntary checks.
+    Checks rider_conditions transitively (stunned implies incapacitated).
     """
     for cond in conditions or []:
         cond_id = cond.get("condition_id", "")
         cdef = CONDITIONS.get(cond_id)
-        if cdef and cdef.incapacitated:
+        if cdef is None:
+            continue
+        if cdef.incapacitated:
+            return True
+        if "incapacitated" in cdef.rider_conditions:
             return True
     return False
 

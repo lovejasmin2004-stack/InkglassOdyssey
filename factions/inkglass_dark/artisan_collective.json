@@ -1,0 +1,6 @@
+{
+  "id": "artisan_collective",
+  "name": "Artisan Collective",
+  "allied_factions": ["merchant_guild"],
+  "rival_factions": []
+}

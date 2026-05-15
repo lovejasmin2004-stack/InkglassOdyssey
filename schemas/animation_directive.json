@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "animation_directive",
+  "title": "AnimationDirective",
+  "type": "object",
+  "required": ["target", "directive"],
+  "additionalProperties": false,
+  "properties": {
+    "target": {
+      "type": "string",
+      "enum": ["npc", "player", "companion", "environment"]
+    },
+    "directive":   { "type": "string", "minLength": 1 },
+    "target_id":   { "type": "string" },
+    "intensity":   { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "duration_ms": { "type": "integer", "minimum": 0 }
+  }
+}

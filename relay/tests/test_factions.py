@@ -324,7 +324,6 @@ class TestStandingEndpoint:
                 "character_id": character_id,
                 "delta": 20,
                 "reason": "major_quest",
-                "faction_registry": FACTION_REGISTRY,
             },
             headers=session_header,
         )
@@ -449,7 +448,6 @@ class TestGetStandingsEndpoint:
                 "character_id": character_id,
                 "delta": 20,
                 "reason": "test",
-                "faction_registry": FACTION_REGISTRY,
             },
             headers=session_header,
         )

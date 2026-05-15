@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "faction",
+  "title": "Faction",
+  "type": "object",
+  "required": ["id", "name", "allied_factions", "rival_factions"],
+  "additionalProperties": false,
+  "properties": {
+    "id":   { "type": "string" },
+    "name": { "type": "string", "minLength": 1 },
+    "allied_factions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "rival_factions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "reputation_thresholds": {
+      "type": "object",
+      "additionalProperties": { "type": "integer" }
+    },
+    "description": { "type": "string" }
+  }
+}

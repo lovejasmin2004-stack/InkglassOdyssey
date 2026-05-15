@@ -18,6 +18,7 @@ from relay.database import get_db
 from relay.economy.pricing import faction_tier
 from relay.factions.reputation import apply_standing_change
 from relay.models import Character
+from relay.world.content_loader import load_faction_registry
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +34,6 @@ class StandingChangeRequest(BaseModel):
     character_id: str
     delta: int = Field(ge=-100, le=100)
     reason: str = ""
-    # TODO(Phase 2): Load faction_registry from server-side content files
-    # instead of accepting from the client (Invariant #1).
-    faction_registry: dict[str, dict] | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -93,11 +91,12 @@ async def patch_standing(
         )
 
     standings = dict(char.faction_standing or {})
+    faction_registry = load_faction_registry(token.world_id)
     changes = apply_standing_change(
         standings,
         faction_id,
         body.delta,
-        faction_registry=body.faction_registry,
+        faction_registry=faction_registry or None,
     )
     char.faction_standing = standings
     char.updated_at = datetime.now(UTC)

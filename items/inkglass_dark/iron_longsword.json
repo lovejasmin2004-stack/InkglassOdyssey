@@ -1,0 +1,18 @@
+{
+  "id": "iron_longsword",
+  "world": "inkglass_dark",
+  "name": "Iron Longsword",
+  "type": "weapon",
+  "rarity": "common",
+  "weight": 3.0,
+  "value": 15,
+  "description_prose": "A sturdy longsword forged from dark iron, its edge still keen despite the nicks from countless skirmishes.",
+  "binding": "unbound",
+  "unique": false,
+  "stats": {
+    "damage_dice": "1d8",
+    "damage_type": "slashing",
+    "modifier_source": "strength",
+    "armour_category": null
+  }
+}

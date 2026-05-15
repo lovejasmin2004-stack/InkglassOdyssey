@@ -1,0 +1,16 @@
+{
+  "id": "leather_armour",
+  "world": "inkglass_dark",
+  "name": "Leather Armour",
+  "type": "armour",
+  "rarity": "common",
+  "weight": 5.0,
+  "value": 10,
+  "description_prose": "Supple leather shaped and hardened over a frame of boiled hide. Favoured by scouts and rangers for its balance of protection and mobility.",
+  "binding": "unbound",
+  "unique": false,
+  "stats": {
+    "ac_bonus": 1,
+    "armour_category": "light"
+  }
+}
