@@ -11,7 +11,7 @@
       "enum": ["npc", "player", "companion", "environment"]
     },
     "directive":   { "type": "string", "minLength": 1 },
-    "target_id":   { "type": "string" },
+    "target_id":   { "type": "string", "minLength": 1 },
     "intensity":   { "type": "number", "minimum": 0.0, "maximum": 1.0 },
     "duration_ms": { "type": "integer", "minimum": 0 }
   }

@@ -1,6 +1,6 @@
 {
   "id": "healing_salve",
-  "world": "inkglass_dark",
+  "world_id": "inkglass_dark",
   "name": "Healing Salve",
   "type": "consumable",
   "rarity": "common",

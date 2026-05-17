@@ -1,0 +1,10 @@
+{
+  "id": "merchant_quarter",
+  "world_id": "inkglass_dark",
+  "name": "Merchant Quarter",
+  "description": "The commercial heart of the city. Open-air markets, counting houses, and Guild offices line broad cobblestone avenues. Carriage traffic is constant. The Merchant Guild maintains order here through hired guards.",
+  "connections": ["thornveil_lowlands", "cladd_territory", "outer_settlements"],
+  "environmental_effects": [],
+  "gathering_nodes": [],
+  "dominant_faction": "merchant_guild"
+}

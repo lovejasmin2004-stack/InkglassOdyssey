@@ -1,6 +1,6 @@
 {
   "id": "duskweaver_cloak",
-  "world": "inkglass_dark",
+  "world_id": "inkglass_dark",
   "name": "Duskweaver Cloak",
   "type": "armour",
   "rarity": "rare",

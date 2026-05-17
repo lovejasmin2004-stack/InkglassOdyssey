@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import uuid
+from collections import OrderedDict
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -114,6 +118,21 @@ class CharacterPatch(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class CharacterListItem(BaseModel):
+    """Lightweight summary for list endpoints — avoids serializing full nested state."""
+
+    id: str
+    player_id: str
+    world_id: str
+    name: str
+    level: int
+    specialisation_path_id: str
+    hp_current: int
+    hp_max: int
+
+    model_config = {"from_attributes": True}
+
+
 class CharacterResponse(BaseModel):
     id: str
     player_id: str
@@ -155,34 +174,67 @@ def _ability_modifier(score: int) -> int:
     return (score - 10) // 2
 
 
-def _get_hit_die(world_id: str, specialisation_path_id: str) -> int:
-    """Look up hit die from world config. Falls back to d8 if not found."""
+_MAX_WORLD_CONFIG_CACHE = 16
+_world_config_cache: OrderedDict[str, dict] = OrderedDict()
+_world_config_lock = asyncio.Lock()
+
+
+def _read_world_config(config_path: Path) -> dict:
+    """Blocking I/O — run via to_thread."""
+    return json.loads(config_path.read_text(encoding="utf-8"))
+
+
+async def _load_world_config(world_id: str) -> dict | None:
+    """Load and cache world config from disk."""
+    async with _world_config_lock:
+        if world_id in _world_config_cache:
+            _world_config_cache.move_to_end(world_id)
+            return _world_config_cache[world_id]
+
+    config_path = Path(__file__).parents[2] / "regions" / world_id / "world_config.json"
+    if not config_path.exists():
+        config_path = Path(__file__).parents[2] / "worlds" / f"{world_id}.json"
+    if not config_path.exists():
+        logger.warning(
+            "World config not found",
+            extra={"world_id": world_id, "searched": ["regions/", "worlds/"]},
+        )
+        return None
+
     try:
-        import json
-        from pathlib import Path
+        config = await asyncio.to_thread(_read_world_config, config_path)
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.error(
+            "Failed to load world config",
+            extra={"world_id": world_id, "path": str(config_path), "error": str(exc)},
+        )
+        return None
 
-        config_path = Path(__file__).parents[2] / "regions" / world_id / "world_config.json"
-        if not config_path.exists():
-            # Try the flat schemas location used during early Phase 0
-            config_path = Path(__file__).parents[2] / "worlds" / f"{world_id}.json"
-        if config_path.exists():
-            config = json.loads(config_path.read_text())
-            for path in config.get("specialisation_paths", []):
-                if path.get("id") == specialisation_path_id:
-                    return path.get("hit_die", 8)
-    except Exception:
-        pass
-    return 8  # Default d8
+    async with _world_config_lock:
+        _world_config_cache[world_id] = config
+        while len(_world_config_cache) > _MAX_WORLD_CONFIG_CACHE:
+            _world_config_cache.popitem(last=False)
+    return config
 
 
-def _compute_defaults(data: CharacterCreate) -> dict:
+async def _get_hit_die(world_id: str, specialisation_path_id: str) -> int:
+    """Look up hit die from world config. Falls back to d8 if not found."""
+    config = await _load_world_config(world_id)
+    if config:
+        for sp in config.get("specialisation_paths", []):
+            if sp.get("id") == specialisation_path_id:
+                return sp.get("hit_die", 8)
+    return 8
+
+
+async def _compute_defaults(data: CharacterCreate) -> dict:
     """Compute hp_max, ac, and passive_checks from ability scores."""
     scores = data.ability_scores
     con_mod = _ability_modifier(scores.get("constitution", scores.get("con", 10)))
     dex_mod = _ability_modifier(scores.get("dexterity", scores.get("dex", 10)))
     wis_mod = _ability_modifier(scores.get("wisdom", scores.get("wis", 10)))
 
-    hit_die = _get_hit_die(data.world_id, data.specialisation_path_id)
+    hit_die = await _get_hit_die(data.world_id, data.specialisation_path_id)
     hp_max = max(1, hit_die + con_mod)
 
     # Unarmoured AC: 10 + DEX
@@ -235,26 +287,26 @@ def _is_internal_caller(token: AccountTokenPayload | SessionTokenPayload) -> boo
 # ---------------------------------------------------------------------------
 
 
-@router.get("", response_model=list[CharacterResponse])
+@router.get("", response_model=list[CharacterListItem])
 async def list_characters(
     token: Token,
     db: DB,
     world_id: str | None = Query(default=None, description="Filter by world"),
-) -> list[CharacterResponse]:
+) -> list[CharacterListItem]:
     """List all characters owned by the authenticated player."""
     query = select(Character).where(Character.player_id == token.player_id)
     if world_id is not None:
         query = query.where(Character.world_id == world_id)
     result = await db.execute(query)
     rows = result.scalars().all()
-    return [_row_to_response(row) for row in rows]
+    return [CharacterListItem.model_validate(row) for row in rows]
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=CharacterResponse)
 async def create_character(body: CharacterCreate, token: Token, db: DB) -> CharacterResponse:
     _check_world_tier(body.world_id, token)
 
-    defaults = _compute_defaults(body)
+    defaults = await _compute_defaults(body)
     now = datetime.now(UTC)
 
     # Default saving throw proficiencies to first two ability score keys if not supplied

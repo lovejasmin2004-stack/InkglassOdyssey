@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +17,8 @@ from relay.auth.middleware import get_current_token
 from relay.auth.tokens import AccountTokenPayload, SessionTokenPayload
 from relay.database import get_db
 from relay.economy.wallet import credit
-from relay.models import Character, TransactionLog
+from relay.endpoints._helpers import load_character_owned
+from relay.models import TransactionLog
 
 logger = logging.getLogger(__name__)
 
@@ -75,27 +76,6 @@ class TransactionHistoryResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-async def _get_character(db: AsyncSession, character_id: str, player_id: str) -> Character:
-    result = await db.execute(select(Character).where(Character.id == character_id))
-    character = result.scalar_one_or_none()
-    if character is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "not_found", "message": "Character not found"},
-        )
-    if character.player_id != player_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "forbidden", "message": "Character belongs to another player"},
-        )
-    return character
-
-
-# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -103,7 +83,7 @@ async def _get_character(db: AsyncSession, character_id: str, player_id: str) ->
 @router.get("/{character_id}", response_model=WalletResponse)
 async def get_wallet(character_id: str, token: Token, db: DB) -> WalletResponse:
     """Get the wallet balances for a character."""
-    character = await _get_character(db, character_id, token.player_id)
+    character = await load_character_owned(db, character_id, token.player_id)
     return WalletResponse(
         character_id=character.id,
         world_id=character.world_id,
@@ -121,7 +101,7 @@ async def grant_currency(body: GrantRequest, token: Token, db: DB) -> GrantRespo
     players' characters.  Until then, DM grants require the player to
     self-grant through their own session token.
     """
-    character = await _get_character(db, body.character_id, token.player_id)
+    character = await load_character_owned(db, body.character_id, token.player_id)
 
     new_balance = await credit(
         db,
@@ -149,7 +129,7 @@ async def get_transactions(
     limit: int = 50,
 ) -> TransactionHistoryResponse:
     """Get the transaction history for a character."""
-    character = await _get_character(db, character_id, token.player_id)
+    character = await load_character_owned(db, character_id, token.player_id)
 
     result = await db.execute(
         select(TransactionLog)

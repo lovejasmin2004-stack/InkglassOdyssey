@@ -4,23 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
-from relay.auth.tokens import create_session_token
-
-
-@pytest.fixture()
-def session_header():
-    token = create_session_token(
-        player_id="player_001",
-        world_id="inkglass_dark",
-        session_id="sess_dice",
-        tier=1,
-        role="player",
-        mode="solo",
-    )
-    return {"Authorization": f"Bearer {token}"}
-
 
 class TestDiceRoll:
     def test_simple_d20(self, db_client, session_header):

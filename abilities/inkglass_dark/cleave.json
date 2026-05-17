@@ -1,6 +1,6 @@
 {
   "id": "cleave",
-  "world": "inkglass_dark",
+  "world_id": "inkglass_dark",
   "name": "Cleave",
   "description": "A sweeping strike that carves through armour. Deals slashing damage based on raw strength.",
   "ability_score": "strength",

@@ -1,0 +1,11 @@
+{
+  "id": "mud_viper",
+  "world_id": "inkglass_dark",
+  "name": "Mud Viper",
+  "description": "A thick-bodied venomous snake that burrows in damp lowland soil. Aggressive when disturbed. Its venom sacs are valued by alchemists.",
+  "region_ids": ["thornveil_lowlands"],
+  "creature_type": "beast",
+  "level": 2,
+  "hostile": true,
+  "gathering_yields": ["viper_venom_sac"]
+}

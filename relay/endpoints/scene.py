@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from relay.ai.npc_loader import NpcLoadError, load_npc
 from relay.auth.middleware import get_current_token
@@ -190,7 +191,7 @@ async def start_scene(
 
     # (#4) Validate NPC exists for this world
     try:
-        npc = load_npc(npc_id, world_id=session.world_id)
+        npc = await load_npc(npc_id, world_id=session.world_id)
     except NpcLoadError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -226,7 +227,9 @@ async def start_scene(
 
 @router.get("/scene/{scene_id}", response_model=SceneResponse)
 async def get_scene(scene_id: str, token: Token, db: DB) -> SceneResponse:
-    result = await db.execute(select(Scene).where(Scene.id == scene_id))
+    result = await db.execute(
+        select(Scene).options(selectinload(Scene.session)).where(Scene.id == scene_id)
+    )
     scene = result.scalar_one_or_none()
 
     if scene is None:
@@ -235,15 +238,16 @@ async def get_scene(scene_id: str, token: Token, db: DB) -> SceneResponse:
             detail={"code": "not_found", "message": "Scene not found"},
         )
 
-    sess_result = await db.execute(select(GameSession).where(GameSession.id == scene.session_id))
-    _assert_scene_owner(sess_result.scalar_one_or_none(), token)
+    _assert_scene_owner(scene.session, token)
 
     return SceneResponse.model_validate(scene)
 
 
 @router.post("/scene/{scene_id}/end", response_model=SceneResponse)
 async def end_scene(scene_id: str, token: Token, db: DB) -> SceneResponse:
-    result = await db.execute(select(Scene).where(Scene.id == scene_id))
+    result = await db.execute(
+        select(Scene).options(selectinload(Scene.session)).where(Scene.id == scene_id)
+    )
     scene = result.scalar_one_or_none()
 
     if scene is None:
@@ -252,8 +256,7 @@ async def end_scene(scene_id: str, token: Token, db: DB) -> SceneResponse:
             detail={"code": "not_found", "message": "Scene not found"},
         )
 
-    sess_result = await db.execute(select(GameSession).where(GameSession.id == scene.session_id))
-    _assert_scene_owner(sess_result.scalar_one_or_none(), token)
+    _assert_scene_owner(scene.session, token)
 
     if scene.status != "active":
         raise HTTPException(
@@ -305,21 +308,15 @@ async def patch_scene(scene_id: str, body: ScenePatchRequest, token: Token, db: 
     """
     _assert_dm_or_admin(token)
 
-    result = await db.execute(select(Scene).where(Scene.id == scene_id))
+    result = await db.execute(
+        select(Scene).options(selectinload(Scene.session)).where(Scene.id == scene_id)
+    )
     scene = result.scalar_one_or_none()
 
     if scene is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "not_found", "message": "Scene not found"},
-        )
-
-    sess_result = await db.execute(select(GameSession).where(GameSession.id == scene.session_id))
-    session = sess_result.scalar_one_or_none()
-    if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "not_found", "message": "Parent session not found"},
         )
 
     if scene.status != "active":

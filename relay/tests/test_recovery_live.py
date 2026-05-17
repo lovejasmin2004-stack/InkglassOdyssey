@@ -102,7 +102,7 @@ async def main() -> None:
                     "character": ANDALU,
                 }
                 await ws.send(json.dumps(turn))
-                print(f"  [sent] RP turn")
+                print("  [sent] RP turn")
 
                 # Wait for stream_start, then disconnect immediately
                 # This gives the relay time to create the pending turn and start processing
@@ -122,7 +122,7 @@ async def main() -> None:
                         elif t == "animation_directive":
                             print(f"  [recv] animation: {msg['directive']}")
                         elif t == "scene_update":
-                            print(f"  [recv] scene_update")
+                            print("  [recv] scene_update")
                         elif t == "stream_chunk":
                             print(f"  [recv] stream_chunk ({len(msg['text'])} chars) -- DISCONNECTING NOW")
                             disconnect_stage = "streaming"
@@ -130,7 +130,7 @@ async def main() -> None:
                         elif t == "error":
                             print(f"  [recv] error: {msg['code']}")
                             break
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         print("  [timeout] No more messages")
                         break
 
@@ -191,7 +191,7 @@ async def main() -> None:
                             print(f"    Response recovered: {len(msg['final_response'])} chars")
                     else:
                         print(f"  [other] {msg['type']}")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
         print(f"\n  Recovery messages received: {len(recovery_messages)}")

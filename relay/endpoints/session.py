@@ -402,22 +402,25 @@ async def end_session(session_id: str, body: SessionEndRequest, token: Token, db
     now = datetime.now(UTC)
     scenes_ended = 0
 
+    active_scene_ids = []
     for scene in scenes:
         if scene.status == "active":
             scene.status = "ended"
             scene.ended_at = now
             scenes_ended += 1
+            active_scene_ids.append(scene.id)
 
-            # (#7) Mark orphaned pending turns as failed
-            orphaned_result = await db.execute(
-                select(PendingTurn)
-                .where(PendingTurn.scene_id == scene.id)
-                .where(PendingTurn.stage.notin_(["complete", "failed"]))
-            )
-            for pt in orphaned_result.scalars().all():
-                pt.stage = "failed"
-                pt.error_message = "session_ended"
-                pt.updated_at = now
+    # (#7) Batch-mark orphaned pending turns as failed (single query)
+    if active_scene_ids:
+        orphaned_result = await db.execute(
+            select(PendingTurn)
+            .where(PendingTurn.scene_id.in_(active_scene_ids))
+            .where(PendingTurn.stage.notin_(["complete", "failed"]))
+        )
+        for pt in orphaned_result.scalars().all():
+            pt.stage = "failed"
+            pt.error_message = "session_ended"
+            pt.updated_at = now
 
     # Build summary and analytics
     summary = _build_session_summary(session, scenes)

@@ -1,0 +1,76 @@
+{
+  "world_id": "inkglass_dark",
+  "animation_states": {
+    "idle_occupied": {
+      "description": "Character occupied with a task, minimal movement",
+      "loops": true
+    },
+    "standing_attentive": {
+      "description": "Standing alert, weight evenly distributed",
+      "loops": true
+    },
+    "standing_behind_counter": {
+      "description": "Standing position behind a shop counter or desk",
+      "loops": true
+    },
+    "lean_forward_examine": {
+      "description": "Leaning forward to inspect something closely",
+      "loops": false
+    },
+    "lean_in_examine": {
+      "description": "Leaning in toward a subject for inspection",
+      "loops": false
+    },
+    "head_tilt_return_to_work": {
+      "description": "Brief acknowledging head tilt before returning to task",
+      "loops": false
+    },
+    "still_listening": {
+      "description": "Body goes still, attention fully directed at speaker",
+      "loops": true
+    },
+    "slow_set_down_object": {
+      "description": "Deliberately setting down a held object with controlled irritation",
+      "loops": false
+    },
+    "fidget_hands": {
+      "description": "Nervous hand fidgeting, wringing or picking at fingers",
+      "loops": true
+    },
+    "step_back_arms_close": {
+      "description": "Defensive half-step back, arms drawn close to body",
+      "loops": false
+    },
+    "small_smile_look_away": {
+      "description": "Brief pleased smile with averted gaze",
+      "loops": false
+    },
+    "return_to_ledger": {
+      "description": "Gaze drops back to written work, conversation deprioritised",
+      "loops": false
+    },
+    "hand_below_counter": {
+      "description": "Hand moves below counter level — reaching for something unseen",
+      "loops": false
+    },
+    "nod_note_in_ledger": {
+      "description": "Approving nod followed by writing a note",
+      "loops": false
+    },
+    "lean_forward_inspect": {
+      "description": "Leaning forward to inspect an offered item or person",
+      "loops": false
+    }
+  },
+  "gaze_targets": {
+    "downward_task_focused": "Eyes on hands or work surface",
+    "slightly_downward_deferential": "Eyes lowered, deferential body language",
+    "attentive_customer": "Direct eye contact with speaker, service posture"
+  },
+  "movement_triggers": [
+    "immediate_threat_nearby",
+    "apprentice_in_danger",
+    "customer_approaching",
+    "patrol_spotted"
+  ]
+}

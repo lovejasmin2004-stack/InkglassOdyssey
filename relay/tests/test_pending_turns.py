@@ -17,31 +17,18 @@ Improvements (step 9):
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from relay.auth.tokens import create_account_token
-
-
-def _make_stub_npc():
-    """Minimal NPC stub for load_npc mock."""
-    stub = MagicMock()
-    stub.id = "stub_npc"
-    return stub
+from relay.tests.conftest import make_stub_npc
 
 
 @pytest.fixture(autouse=True)
 def _mock_load_npc():
     """Mock load_npc so scene creation doesn't require real NPC files."""
-    with patch("relay.endpoints.scene.load_npc", return_value=_make_stub_npc()):
+    with patch("relay.endpoints.scene.load_npc", return_value=make_stub_npc()):
         yield
-
-
-@pytest.fixture()
-def auth_header():
-    token = create_account_token(player_id="player_001", tier=1)
-    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture()

@@ -1,8 +1,9 @@
 {
-  "id": "thornveil_lowlands",
+  "id": "thornveil_lowlands_geography",
   "world_id": "inkglass_dark",
   "region_id": "thornveil_lowlands",
   "title": "The Thornveil Lowlands",
   "content": "The Thornveil Lowlands stretch south from the Merchant Quarter, a patchwork of muddy pastures and thorn-hedged lanes. Travellers on the main road between settlements keep one hand on their coin-purse and the other near their weapon. Bandit ambushes are common enough that the Merchant Guild posts bounties on a rotating board outside the factor's office. The land is flat and open, offering little cover — fights here favour those who strike first.",
-  "tags": ["region", "geography", "thornveil_lowlands", "merchant_guild"]
+  "tags": ["region", "geography", "thornveil_lowlands", "merchant_guild"],
+  "related_factions": ["merchant_guild"]
 }

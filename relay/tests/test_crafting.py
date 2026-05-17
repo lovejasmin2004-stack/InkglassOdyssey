@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from relay.auth.tokens import create_account_token, create_session_token
+from relay.auth.tokens import create_account_token
 from relay.crafting.crafter import (
     LevelTooLowError,
     MissingMaterialsError,
@@ -31,10 +31,10 @@ from relay.crafting.gathering import add_gathered_to_inventory, resolve_gather_y
 # ---------------------------------------------------------------------------
 
 SAMPLE_RECIPE = {
-    "id": "recipe_iron_sword",
-    "world": "inkglass_dark",
-    "name": "Iron Sword",
-    "output_item_id": "iron_sword",
+    "id": "iron_longsword_recipe",
+    "world_id": "inkglass_dark",
+    "name": "Iron Longsword",
+    "output_item_id": "iron_longsword",
     "output_quantity": 1,
     "input_materials": [
         {"item_id": "iron_ingot", "quantity": 3},
@@ -43,19 +43,15 @@ SAMPLE_RECIPE = {
     "required_station_type": "forge",
     "required_skill": "athletics",
     "skill_dc": 12,
-    "discovery_method": "taught",
-    "level_requirement": 1,
+    "level_requirement": 2,
 }
 
 SAMPLE_NODE = {
-    "id": "node_iron_vein",
-    "name": "Iron Vein",
-    "material_id": "iron_ore",
-    "skill": "survival",
-    "dc": 10,
-    "yield_min": 2,
-    "yield_max": 4,
-    "tier": "common",
+    "item_id": "iron_ore",
+    "skill": "athletics",
+    "dc": 12,
+    "yield_min": 1,
+    "yield_max": 3,
 }
 
 
@@ -108,6 +104,18 @@ class TestConsumeMaterials:
         leather = next(e for e in result if e["item_id"] == "leather_strip")
         assert iron["quantity"] == 2
         assert leather["quantity"] == 2
+
+    def test_prefers_unbound_stacks(self):
+        inventory = [
+            {"item_id": "iron_ingot", "quantity": 5, "binding_state": "bound"},
+            {"item_id": "iron_ingot", "quantity": 5, "binding_state": "unbound"},
+            {"item_id": "leather_strip", "quantity": 2, "binding_state": "unbound"},
+        ]
+        result = consume_materials(SAMPLE_RECIPE["input_materials"], inventory)
+        bound = next(e for e in result if e["item_id"] == "iron_ingot" and e["binding_state"] == "bound")
+        assert bound["quantity"] == 5
+        unbound = next(e for e in result if e["item_id"] == "iron_ingot" and e["binding_state"] == "unbound")
+        assert unbound["quantity"] == 2
 
 
 class TestConsumePartialMaterials:
@@ -170,7 +178,7 @@ class TestHasToolAdvantage:
 
     def test_non_tool_item_no_advantage(self):
         equipped = {
-            "main_hand": {
+            "tool_slot": {
                 "item_id": "iron_sword",
                 "item_type": "weapon",
                 "associated_skill": "athletics",
@@ -180,6 +188,16 @@ class TestHasToolAdvantage:
 
     def test_empty_gear_no_advantage(self):
         assert has_tool_advantage({}, "athletics") is False
+
+    def test_tool_in_wrong_slot_no_advantage(self):
+        equipped = {
+            "main_hand": {
+                "item_id": "smithing_hammer",
+                "item_type": "tool",
+                "associated_skill": "athletics",
+            }
+        }
+        assert has_tool_advantage(equipped, "athletics") is False
 
 
 class TestProduceOutput:
@@ -197,6 +215,16 @@ class TestProduceOutput:
         sword = next(e for e in result if e["item_id"] == "iron_sword")
         assert sword["quantity"] == 2
 
+    def test_bound_output(self):
+        inventory = []
+        result = produce_output("soulbound_blade", 1, inventory, binding="bound")
+        assert result[0]["binding_state"] == "bound"
+
+    def test_bound_does_not_stack_with_unbound(self):
+        inventory = [{"item_id": "item_x", "quantity": 3, "binding_state": "unbound"}]
+        result = produce_output("item_x", 1, inventory, binding="bound")
+        assert len(result) == 2
+
 
 class TestValidateRecipeRequirements:
     def test_valid(self):
@@ -207,7 +235,7 @@ class TestValidateRecipeRequirements:
         result = validate_recipe_requirements(
             SAMPLE_RECIPE,
             character_level=5,
-            known_recipes=["recipe_iron_sword"],
+            known_recipes=["iron_longsword_recipe"],
             inventory=inventory,
             station_type="forge",
         )
@@ -223,7 +251,7 @@ class TestValidateRecipeRequirements:
         recipe = {**SAMPLE_RECIPE, "level_requirement": 10}
         with pytest.raises(LevelTooLowError):
             validate_recipe_requirements(
-                recipe, character_level=5, known_recipes=["recipe_iron_sword"], inventory=[], station_type="forge"
+                recipe, character_level=5, known_recipes=["iron_longsword_recipe"], inventory=[], station_type="forge"
             )
 
     def test_missing_materials(self):
@@ -231,7 +259,7 @@ class TestValidateRecipeRequirements:
             validate_recipe_requirements(
                 SAMPLE_RECIPE,
                 character_level=5,
-                known_recipes=["recipe_iron_sword"],
+                known_recipes=["iron_longsword_recipe"],
                 inventory=[],
                 station_type="forge",
             )
@@ -245,7 +273,7 @@ class TestValidateRecipeRequirements:
             validate_recipe_requirements(
                 SAMPLE_RECIPE,
                 character_level=5,
-                known_recipes=["recipe_iron_sword"],
+                known_recipes=["iron_longsword_recipe"],
                 inventory=inventory,
                 station_type=None,
             )
@@ -259,14 +287,13 @@ class TestValidateRecipeRequirements:
             validate_recipe_requirements(
                 SAMPLE_RECIPE,
                 character_level=5,
-                known_recipes=["recipe_iron_sword"],
+                known_recipes=["iron_longsword_recipe"],
                 inventory=inventory,
                 station_type="alchemy_bench",
             )
 
     def test_no_station_required_in_recipe(self):
-        recipe = {**SAMPLE_RECIPE}
-        del recipe["required_station_type"]
+        recipe = {**SAMPLE_RECIPE, "required_station_type": None}
         inventory = [
             {"item_id": "iron_ingot", "quantity": 5, "binding_state": "unbound"},
             {"item_id": "leather_strip", "quantity": 2, "binding_state": "unbound"},
@@ -274,7 +301,7 @@ class TestValidateRecipeRequirements:
         result = validate_recipe_requirements(
             recipe,
             character_level=5,
-            known_recipes=["recipe_iron_sword"],
+            known_recipes=["iron_longsword_recipe"],
             inventory=inventory,
             station_type=None,
         )
@@ -291,13 +318,26 @@ class TestGatherYield:
         with patch("relay.crafting.gathering.random.randint", return_value=3):
             result = resolve_gather_yield(SAMPLE_NODE, check_passed=True)
         assert result["success"] is True
-        assert result["material_id"] == "iron_ore"
+        assert result["item_id"] == "iron_ore"
         assert result["quantity"] == 3
 
     def test_failure_yields_nothing(self):
         result = resolve_gather_yield(SAMPLE_NODE, check_passed=False)
         assert result["success"] is False
         assert result["quantity"] == 0
+
+    def test_uses_node_yield_range(self):
+        node = {"item_id": "moonpetal", "skill": "nature", "dc": 14, "yield_min": 2, "yield_max": 5}
+        with patch("relay.crafting.gathering.random.randint", return_value=4) as mock_rand:
+            result = resolve_gather_yield(node, check_passed=True)
+        mock_rand.assert_called_with(2, 5)
+        assert result["quantity"] == 4
+
+    def test_default_yield_range(self):
+        node = {"item_id": "camphor_resin", "skill": "survival", "dc": 10}
+        with patch("relay.crafting.gathering.random.randint", return_value=2) as mock_rand:
+            resolve_gather_yield(node, check_passed=True)
+        mock_rand.assert_called_with(1, 3)
 
 
 class TestAddGatheredToInventory:
@@ -323,25 +363,6 @@ class TestAddGatheredToInventory:
 # ---------------------------------------------------------------------------
 # Integration tests — endpoints
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def session_header():
-    token = create_session_token(
-        player_id="player_001",
-        world_id="inkglass_dark",
-        session_id="sess_001",
-        tier=1,
-        role="player",
-        mode="solo",
-    )
-    return {"Authorization": f"Bearer {token}"}
-
-
-@pytest.fixture()
-def auth_header():
-    token = create_account_token(player_id="player_001", tier=1)
-    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture()
@@ -372,11 +393,12 @@ def crafter_id(db_client, auth_header):
     patch_resp = db_client.patch(
         f"/character/{char_id}",
         json={
+            "level": 5,
             "inventory": [
                 {"item_id": "iron_ingot", "quantity": 10, "binding_state": "unbound"},
                 {"item_id": "leather_strip", "quantity": 5, "binding_state": "unbound"},
             ],
-            "known_recipes": ["recipe_iron_sword"],
+            "known_recipes": ["iron_longsword_recipe"],
         },
         headers=auth_header,
     )
@@ -391,7 +413,7 @@ class TestCraftEndpoint:
                 "/craft",
                 json={
                     "character_id": crafter_id,
-                    "recipe": SAMPLE_RECIPE,
+                    "recipe_id": "iron_longsword_recipe",
                     "station_type": "forge",
                 },
                 headers=session_header,
@@ -400,9 +422,9 @@ class TestCraftEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["success"] is True
-        assert data["output_item_id"] == "iron_sword"
+        assert data["output_item_id"] == "iron_longsword"
         assert data["output_quantity"] == 1
-        assert data["materials_consumed"] is True
+        assert data["materials_consumed"] is not None
         assert data["materials_lost"] is None
         assert data["critical"] is False
         assert data["check_result"]["passed"] is True
@@ -410,7 +432,7 @@ class TestCraftEndpoint:
         char = db_client.get(f"/character/{crafter_id}", headers=_make_auth_header()).json()
         iron = next((e for e in char["inventory"] if e["item_id"] == "iron_ingot"), None)
         assert iron["quantity"] == 7  # 10 - 3
-        sword = next((e for e in char["inventory"] if e["item_id"] == "iron_sword"), None)
+        sword = next((e for e in char["inventory"] if e["item_id"] == "iron_longsword"), None)
         assert sword is not None
         assert sword["quantity"] == 1
 
@@ -420,7 +442,7 @@ class TestCraftEndpoint:
                 "/craft",
                 json={
                     "character_id": crafter_id,
-                    "recipe": SAMPLE_RECIPE,
+                    "recipe_id": "iron_longsword_recipe",
                     "station_type": "forge",
                 },
                 headers=session_header,
@@ -429,10 +451,8 @@ class TestCraftEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["success"] is False
-        assert data["materials_consumed"] is False
         assert data["check_result"]["passed"] is False
         assert data["materials_lost"] is not None
-        # 50% rounded up: iron_ingot loses 2, leather_strip loses 1
         iron_lost = next(m for m in data["materials_lost"] if m["item_id"] == "iron_ingot")
         leather_lost = next(m for m in data["materials_lost"] if m["item_id"] == "leather_strip")
         assert iron_lost["quantity"] == 2
@@ -450,7 +470,7 @@ class TestCraftEndpoint:
                 "/craft",
                 json={
                     "character_id": crafter_id,
-                    "recipe": SAMPLE_RECIPE,
+                    "recipe_id": "iron_longsword_recipe",
                     "station_type": "forge",
                 },
                 headers=session_header,
@@ -463,7 +483,7 @@ class TestCraftEndpoint:
         assert data["output_quantity"] == 2  # base 1 + 1 crit bonus
 
         char = db_client.get(f"/character/{crafter_id}", headers=_make_auth_header()).json()
-        sword = next((e for e in char["inventory"] if e["item_id"] == "iron_sword"), None)
+        sword = next((e for e in char["inventory"] if e["item_id"] == "iron_longsword"), None)
         assert sword["quantity"] == 2
 
     def test_craft_station_required(self, db_client, session_header, crafter_id):
@@ -471,7 +491,7 @@ class TestCraftEndpoint:
             "/craft",
             json={
                 "character_id": crafter_id,
-                "recipe": SAMPLE_RECIPE,
+                "recipe_id": "iron_longsword_recipe",
                 "station_type": None,
             },
             headers=session_header,
@@ -484,7 +504,7 @@ class TestCraftEndpoint:
             "/craft",
             json={
                 "character_id": crafter_id,
-                "recipe": SAMPLE_RECIPE,
+                "recipe_id": "iron_longsword_recipe",
                 "station_type": "alchemy_bench",
             },
             headers=session_header,
@@ -512,7 +532,7 @@ class TestCraftEndpoint:
                 "/craft",
                 json={
                     "character_id": crafter_id,
-                    "recipe": SAMPLE_RECIPE,
+                    "recipe_id": "iron_longsword_recipe",
                     "station_type": "forge",
                 },
                 headers=session_header,
@@ -524,18 +544,29 @@ class TestCraftEndpoint:
         assert data["success"] is True
 
     def test_craft_recipe_not_known(self, db_client, session_header, crafter_id):
-        unknown_recipe = {**SAMPLE_RECIPE, "id": "recipe_unknown"}
         resp = db_client.post(
             "/craft",
             json={
                 "character_id": crafter_id,
-                "recipe": unknown_recipe,
-                "station_type": "forge",
+                "recipe_id": "healing_salve_recipe",
+                "station_type": None,
             },
             headers=session_header,
         )
         assert resp.status_code == 400
         assert resp.json()["code"] == "recipe_not_known"
+
+    def test_craft_recipe_not_found(self, db_client, session_header, crafter_id):
+        resp = db_client.post(
+            "/craft",
+            json={
+                "character_id": crafter_id,
+                "recipe_id": "nonexistent_recipe",
+            },
+            headers=session_header,
+        )
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "recipe_not_found"
 
     def test_craft_missing_materials(self, db_client, session_header, auth_header, crafter_id):
         db_client.patch(
@@ -548,7 +579,7 @@ class TestCraftEndpoint:
             "/craft",
             json={
                 "character_id": crafter_id,
-                "recipe": SAMPLE_RECIPE,
+                "recipe_id": "iron_longsword_recipe",
                 "station_type": "forge",
             },
             headers=session_header,
@@ -562,7 +593,7 @@ class TestCraftEndpoint:
                 "/craft",
                 json={
                     "character_id": crafter_id,
-                    "recipe": SAMPLE_RECIPE,
+                    "recipe_id": "iron_longsword_recipe",
                     "station_type": "forge",
                 },
                 headers=session_header,
@@ -579,34 +610,57 @@ class TestCraftEndpoint:
             txs = tx_resp.json()["transactions"]
             craft_txs = [t for t in txs if t["tx_type"] == "craft"]
             assert len(craft_txs) >= 1
-            assert craft_txs[0]["item_id"] == "iron_sword"
+            assert craft_txs[0]["item_id"] == "iron_longsword"
+
+    def test_craft_rejects_extra_fields(self, db_client, session_header, crafter_id):
+        resp = db_client.post(
+            "/craft",
+            json={
+                "character_id": crafter_id,
+                "recipe_id": "iron_longsword_recipe",
+                "station_type": "forge",
+                "extra_field": "should_reject",
+            },
+            headers=session_header,
+        )
+        assert resp.status_code == 422
 
 
 class TestGatherEndpoint:
     def test_gather_success(self, db_client, session_header, crafter_id):
-        with patch("random.randint", side_effect=[15, 3]):
+        # First call: check resolver d20 roll (18 passes DC 12).
+        # Second call: gather yield randint(1, 3) → 2.
+        with patch("relay.checks.resolver.random.randint", side_effect=[18, 2]):
             resp = db_client.post(
                 "/gather",
-                json={"character_id": crafter_id, "node": SAMPLE_NODE},
+                json={
+                    "character_id": crafter_id,
+                    "region_id": "thornveil_lowlands",
+                    "node_item_id": "iron_ore",
+                },
                 headers=session_header,
             )
 
         assert resp.status_code == 200
         data = resp.json()
         assert data["success"] is True
-        assert data["material_id"] == "iron_ore"
-        assert data["quantity"] == 3
+        assert data["item_id"] == "iron_ore"
+        assert data["quantity"] == 2
 
         char = db_client.get(f"/character/{crafter_id}", headers=_make_auth_header()).json()
         ore = next((e for e in char["inventory"] if e["item_id"] == "iron_ore"), None)
         assert ore is not None
-        assert ore["quantity"] == 3
+        assert ore["quantity"] == 2
 
     def test_gather_failure(self, db_client, session_header, crafter_id):
-        with patch("random.randint", return_value=1):
+        with patch("relay.checks.resolver.random.randint", return_value=1):
             resp = db_client.post(
                 "/gather",
-                json={"character_id": crafter_id, "node": SAMPLE_NODE},
+                json={
+                    "character_id": crafter_id,
+                    "region_id": "thornveil_lowlands",
+                    "node_item_id": "iron_ore",
+                },
                 headers=session_header,
             )
 
@@ -615,21 +669,76 @@ class TestGatherEndpoint:
         assert data["success"] is False
         assert data["quantity"] == 0
 
+    def test_gather_region_not_found(self, db_client, session_header, crafter_id):
+        resp = db_client.post(
+            "/gather",
+            json={
+                "character_id": crafter_id,
+                "region_id": "nonexistent_region",
+                "node_item_id": "iron_ore",
+            },
+            headers=session_header,
+        )
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "region_not_found"
+
+    def test_gather_node_not_found(self, db_client, session_header, crafter_id):
+        resp = db_client.post(
+            "/gather",
+            json={
+                "character_id": crafter_id,
+                "region_id": "thornveil_lowlands",
+                "node_item_id": "nonexistent_item",
+            },
+            headers=session_header,
+        )
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "node_not_found"
+
+    def test_gather_cooldown(self, db_client, session_header, crafter_id):
+        with patch("relay.checks.resolver.random.randint", side_effect=[18, 1]):
+            resp1 = db_client.post(
+                "/gather",
+                json={
+                    "character_id": crafter_id,
+                    "region_id": "thornveil_lowlands",
+                    "node_item_id": "camphor_resin",
+                },
+                headers=session_header,
+            )
+        assert resp1.status_code == 200
+
+        resp2 = db_client.post(
+            "/gather",
+            json={
+                "character_id": crafter_id,
+                "region_id": "thornveil_lowlands",
+                "node_item_id": "camphor_resin",
+            },
+            headers=session_header,
+        )
+        assert resp2.status_code == 429
+        assert resp2.json()["code"] == "gather_cooldown"
+
     def test_gather_stacks_existing_materials(self, db_client, session_header, auth_header, crafter_id):
         db_client.patch(
             f"/character/{crafter_id}",
             json={
                 "inventory": [
-                    {"item_id": "iron_ore", "quantity": 5, "binding_state": "unbound"},
+                    {"item_id": "moonpetal", "quantity": 5, "binding_state": "unbound"},
                 ],
             },
             headers=auth_header,
         )
 
-        with patch("random.randint", side_effect=[15, 2]):
+        with patch("relay.checks.resolver.random.randint", side_effect=[18, 2]):
             resp = db_client.post(
                 "/gather",
-                json={"character_id": crafter_id, "node": SAMPLE_NODE},
+                json={
+                    "character_id": crafter_id,
+                    "region_id": "thornveil_lowlands",
+                    "node_item_id": "moonpetal",
+                },
                 headers=session_header,
             )
 
@@ -639,104 +748,17 @@ class TestGatherEndpoint:
         assert data["quantity"] == 2
 
         char = db_client.get(f"/character/{crafter_id}", headers=_make_auth_header()).json()
-        ore = next(e for e in char["inventory"] if e["item_id"] == "iron_ore")
-        assert ore["quantity"] == 7  # 5 + 2
+        petal = next(e for e in char["inventory"] if e["item_id"] == "moonpetal")
+        assert petal["quantity"] == 7  # 5 + 2
 
-
-def _make_auth_header() -> dict:
-    token = create_account_token(player_id="player_001", tier=1)
-    return {"Authorization": f"Bearer {token}"}
-
-
-# ---------------------------------------------------------------------------
-# Step 12 continued — new tests for crafting/gathering improvements
-# ---------------------------------------------------------------------------
-
-
-class TestRecipeValidationModel:
-    """#1 — Pydantic RecipeInput rejects malformed payloads."""
-
-    def test_missing_recipe_id(self, db_client, session_header, crafter_id):
-        """Recipe without 'id' field is rejected with 422."""
-        resp = db_client.post(
-            "/craft",
-            json={
-                "character_id": crafter_id,
-                "recipe": {
-                    "output_item_id": "iron_sword",
-                    "input_materials": [{"item_id": "iron_ingot", "quantity": 3}],
-                },
-                "station_type": "forge",
-            },
-            headers=session_header,
-        )
-        assert resp.status_code == 422
-
-    def test_missing_material_id(self, db_client, session_header, crafter_id):
-        """Recipe with malformed input_materials is rejected."""
-        resp = db_client.post(
-            "/craft",
-            json={
-                "character_id": crafter_id,
-                "recipe": {
-                    "id": "recipe_bad",
-                    "output_item_id": "thing",
-                    "input_materials": [{"quantity": 3}],  # missing item_id
-                },
-            },
-            headers=session_header,
-        )
-        assert resp.status_code == 422
-
-    def test_empty_input_materials(self, db_client, session_header, crafter_id):
-        """Recipe with empty input_materials is rejected."""
-        resp = db_client.post(
-            "/craft",
-            json={
-                "character_id": crafter_id,
-                "recipe": {
-                    "id": "recipe_bad",
-                    "output_item_id": "thing",
-                    "input_materials": [],
-                },
-            },
-            headers=session_header,
-        )
-        assert resp.status_code == 422
-
-
-class TestGatherNodeValidationModel:
-    """#1/#9 — Pydantic GatherNode rejects malformed payloads."""
-
-    def test_missing_material_id(self, db_client, session_header, crafter_id):
+    def test_gather_rejects_extra_fields(self, db_client, session_header, crafter_id):
         resp = db_client.post(
             "/gather",
             json={
                 "character_id": crafter_id,
-                "node": {"skill": "survival", "dc": 10},
-            },
-            headers=session_header,
-        )
-        assert resp.status_code == 422
-
-    def test_missing_dc(self, db_client, session_header, crafter_id):
-        """dc is required — no silent default to 12."""
-        resp = db_client.post(
-            "/gather",
-            json={
-                "character_id": crafter_id,
-                "node": {"material_id": "iron_ore", "skill": "survival"},
-            },
-            headers=session_header,
-        )
-        assert resp.status_code == 422
-
-    def test_missing_skill(self, db_client, session_header, crafter_id):
-        resp = db_client.post(
-            "/gather",
-            json={
-                "character_id": crafter_id,
-                "node": {"material_id": "iron_ore", "dc": 10},
+                "region_id": "thornveil_lowlands",
+                "node_item_id": "iron_ore",
+                "extra_field": "should_reject",
             },
             headers=session_header,
         )
@@ -744,10 +766,9 @@ class TestGatherNodeValidationModel:
 
 
 class TestExhaustionOnCraftGather:
-    """#3/#4 — Exhaustion imposes disadvantage on craft/gather checks."""
+    """Exhaustion imposes disadvantage on craft/gather checks."""
 
     def test_exhausted_crafter_has_disadvantage(self, db_client, session_header, auth_header, crafter_id):
-        """Exhaustion level 1 → disadvantage on craft check."""
         db_client.patch(
             f"/character/{crafter_id}",
             json={"exhaustion_level": 1},
@@ -759,7 +780,7 @@ class TestExhaustionOnCraftGather:
                 "/craft",
                 json={
                     "character_id": crafter_id,
-                    "recipe": SAMPLE_RECIPE,
+                    "recipe_id": "iron_longsword_recipe",
                     "station_type": "forge",
                 },
                 headers=session_header,
@@ -768,11 +789,9 @@ class TestExhaustionOnCraftGather:
         assert resp.status_code == 200
         data = resp.json()
         assert data["check_result"]["roll_mode"] == "disadvantage"
-        # Disadvantage: rolled 18 and 5, takes lowest = 5
         assert data["check_result"]["roll"] == 5
 
     def test_exhausted_gatherer_has_disadvantage(self, db_client, session_header, auth_header, crafter_id):
-        """Exhaustion level 2 → disadvantage on gather check."""
         db_client.patch(
             f"/character/{crafter_id}",
             json={"exhaustion_level": 2},
@@ -782,7 +801,11 @@ class TestExhaustionOnCraftGather:
         with patch("relay.checks.resolver.random.randint", side_effect=[15, 4]):
             resp = db_client.post(
                 "/gather",
-                json={"character_id": crafter_id, "node": SAMPLE_NODE},
+                json={
+                    "character_id": crafter_id,
+                    "region_id": "thornveil_lowlands",
+                    "node_item_id": "iron_ore",
+                },
                 headers=session_header,
             )
 
@@ -793,7 +816,7 @@ class TestExhaustionOnCraftGather:
 
 
 class TestCraftFailTransactionLog:
-    """#6 — Failed crafts write a craft_fail transaction log entry."""
+    """Failed crafts write a craft_fail transaction log entry."""
 
     def test_failed_craft_logs_transaction(self, db_client, session_header, crafter_id):
         with patch("relay.checks.resolver.random.randint", return_value=1):
@@ -801,7 +824,7 @@ class TestCraftFailTransactionLog:
                 "/craft",
                 json={
                     "character_id": crafter_id,
-                    "recipe": SAMPLE_RECIPE,
+                    "recipe_id": "iron_longsword_recipe",
                     "station_type": "forge",
                 },
                 headers=session_header,
@@ -819,11 +842,11 @@ class TestCraftFailTransactionLog:
             fail_txs = [t for t in txs if t["tx_type"] == "craft_fail"]
             assert len(fail_txs) == 1
             assert "lost:" in fail_txs[0]["note"]
-            assert fail_txs[0]["item_id"] == "iron_sword"
+            assert fail_txs[0]["item_id"] == "iron_longsword"
 
 
 class TestLogItemTransactionHelper:
-    """#8 — log_item_transaction centralises non-currency transaction logging."""
+    """log_item_transaction centralises non-currency transaction logging."""
 
     @pytest.mark.asyncio()
     async def test_creates_transaction_log(self):
@@ -855,3 +878,8 @@ class TestLogItemTransactionHelper:
         assert tx.item_quantity == 1
         assert tx.amount == 0
         assert tx.note == "Crafted Iron Sword"
+
+
+def _make_auth_header() -> dict:
+    token = create_account_token(player_id="player_001", tier=1)
+    return {"Authorization": f"Bearer {token}"}

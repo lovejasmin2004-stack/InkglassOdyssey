@@ -1,5 +1,6 @@
 {
   "id": "healing_salve_recipe",
+  "world_id": "inkglass_dark",
   "name": "Healing Salve",
   "output_item_id": "healing_salve",
   "output_quantity": 1,

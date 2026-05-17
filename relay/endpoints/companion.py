@@ -7,7 +7,6 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -31,7 +30,7 @@ from relay.companions.manager import (
     validate_recruitment,
 )
 from relay.database import get_db
-from relay.models import Character
+from relay.endpoints._helpers import load_character_owned
 
 logger = logging.getLogger(__name__)
 
@@ -110,30 +109,6 @@ class CompanionsResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-async def _load_character(db: AsyncSession, character_id: str, player_id: str) -> Character:
-    result = await db.execute(
-        select(Character).where(
-            Character.id == character_id,
-            Character.player_id == player_id,
-        )
-    )
-    char = result.scalar_one_or_none()
-    if not char:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "character_not_found",
-                "message": "Character not found",
-            },
-        )
-    return char
-
-
-# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -145,7 +120,7 @@ async def post_recruit(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> RecruitResponse:
     """Recruit a companion NPC."""
-    char = await _load_character(db, body.character_id, token.player_id)
+    char = await load_character_owned(db, body.character_id, token.player_id)
 
     companions = list(char.companions or [])
     relationships = dict(char.relationships or {})
@@ -224,7 +199,7 @@ async def post_combat_action(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CombatActionResponse:
     """Resolve one automatic combat action for a companion."""
-    char = await _load_character(db, body.character_id, token.player_id)
+    char = await load_character_owned(db, body.character_id, token.player_id)
     companions = list(char.companions or [])
 
     comp = find_companion(companions, companion_id)
@@ -255,7 +230,7 @@ async def post_incapacitate(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> IncapacitateResponse:
     """Process companion incapacitation (0 HP in combat)."""
-    char = await _load_character(db, body.character_id, token.player_id)
+    char = await load_character_owned(db, body.character_id, token.player_id)
     companions = list(char.companions or [])
     relationships = dict(char.relationships or {})
 
@@ -293,7 +268,7 @@ async def post_recover(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Recover a companion after combat ends."""
-    char = await _load_character(db, body.character_id, token.player_id)
+    char = await load_character_owned(db, body.character_id, token.player_id)
     companions = list(char.companions or [])
 
     comp = find_companion(companions, companion_id)
@@ -323,7 +298,7 @@ async def post_dismiss(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> DismissResponse:
     """Dismiss a companion (triggers farewell_template)."""
-    char = await _load_character(db, body.character_id, token.player_id)
+    char = await load_character_owned(db, body.character_id, token.player_id)
     companions = list(char.companions or [])
     relationships = dict(char.relationships or {})
 
@@ -361,7 +336,7 @@ async def get_companions(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CompanionsResponse:
     """Get all companions for a character."""
-    char = await _load_character(db, character_id, token.player_id)
+    char = await load_character_owned(db, character_id, token.player_id)
     companions = char.companions or []
 
     return CompanionsResponse(

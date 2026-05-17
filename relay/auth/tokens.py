@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import jwt
@@ -34,7 +34,7 @@ class SessionTokenPayload(BaseModel):
 
 
 def create_account_token(player_id: str, tier: int) -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "player_id": player_id,
         "tier": tier,
@@ -54,7 +54,7 @@ def create_session_token(
     role: Literal["player", "dm"] = "player",
     mode: Literal["solo", "multiplayer"] = "solo",
 ) -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "player_id": player_id,
         "world_id": world_id,

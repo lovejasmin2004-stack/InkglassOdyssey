@@ -10,6 +10,7 @@ operates per-message within a connection.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -52,6 +53,7 @@ class _Bucket:
 
 
 _buckets: dict[str, _Bucket] = {}
+_buckets_lock = asyncio.Lock()
 
 
 def clear_buckets() -> None:
@@ -60,7 +62,7 @@ def clear_buckets() -> None:
 
 
 def _evict_stale() -> None:
-    """Remove buckets not accessed in _STALE_SECONDS. Called lazily."""
+    """Remove buckets not accessed in _STALE_SECONDS. Called under lock."""
     now = time.monotonic()
     stale_keys = [key for key, bucket in _buckets.items() if (now - bucket.last_refill) > _STALE_SECONDS]
     for key in stale_keys:
@@ -79,13 +81,16 @@ async def rate_limit_middleware(request: Request, call_next):
     if request.url.path in _EXEMPT_PATHS:
         return await call_next(request)
 
-    if len(_buckets) > _EVICTION_THRESHOLD:
-        _evict_stale()
-
     key = _get_rate_limit_key(request)
-    bucket = _buckets.setdefault(key, _Bucket())
 
-    if not bucket.allow():
+    async with _buckets_lock:
+        if len(_buckets) > _EVICTION_THRESHOLD:
+            _evict_stale()
+
+        bucket = _buckets.setdefault(key, _Bucket())
+        allowed = bucket.allow()
+
+    if not allowed:
         logger.warning(
             "Rate limited",
             extra={"rate_limit_key": key, "path": request.url.path},

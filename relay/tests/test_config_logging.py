@@ -10,7 +10,6 @@ import pytest
 from relay.config import Settings
 from relay.logging_config import JSONFormatter, _redact, setup_logging
 
-
 # ===========================================================================
 # Config — Settings validation
 # ===========================================================================

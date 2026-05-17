@@ -27,6 +27,7 @@ from relay.endpoints.shop import router as shop_router
 from relay.endpoints.wallet import router as wallet_router
 from relay.logging_config import setup_logging
 from relay.middleware.rate_limit import rate_limit_middleware
+from relay.schemas import ErrorResponse
 
 setup_logging(level=settings.log_level)
 
@@ -78,18 +79,36 @@ app.include_router(wallet_router)
 async def http_exception_handler(request, exc: StarletteHTTPException):
     detail = exc.detail
     if isinstance(detail, dict) and "code" in detail:
-        body = detail
+        body = ErrorResponse(**detail).model_dump(exclude_none=True)
     else:
-        body = {"code": str(exc.status_code), "message": str(detail)}
+        body = ErrorResponse(
+            code=str(exc.status_code),
+            message=str(detail),
+        ).model_dump(exclude_none=True)
     return JSONResponse(status_code=exc.status_code, content=body)
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc: RequestValidationError):
-    return JSONResponse(
-        status_code=422,
-        content={"code": "validation_error", "message": str(exc.errors())},
-    )
+    parts: list[str] = []
+    for err in exc.errors():
+        loc = " → ".join(str(part) for part in err["loc"] if part != "body")
+        parts.append(f"{loc}: {err['msg']}" if loc else err["msg"])
+    body = ErrorResponse(
+        code="validation_error",
+        message="; ".join(parts),
+    ).model_dump(exclude_none=True)
+    return JSONResponse(status_code=422, content=body)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc: Exception):
+    logger.exception("Unhandled exception", extra={"path": request.url.path})
+    body = ErrorResponse(
+        code="internal_error",
+        message="An internal error occurred",
+    ).model_dump(exclude_none=True)
+    return JSONResponse(status_code=500, content=body)
 
 
 @app.get("/health")

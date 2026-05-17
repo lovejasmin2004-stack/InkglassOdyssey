@@ -1,0 +1,40 @@
+{
+  "id": "tinte_recruitment",
+  "world_id": "inkglass_dark",
+  "name": "The Apprentice's Errand",
+  "description": "Tinte has been sent to retrieve supplies from the outer settlements alone — a task Seta normally handles himself. The player encounters him struggling with a hostile fauna encounter near the settlement perimeter. Helping him creates a debt; ignoring him closes the recruitment path.",
+  "type": "companion_recruitment",
+  "companion_npc_id": "tinte_apprentice",
+  "region_id": "outer_settlements",
+  "level_range": { "min": 3, "max": 6 },
+  "prerequisites": {
+    "faction_requirements": [],
+    "quest_requirements": [],
+    "min_relationship_with_npc": null
+  },
+  "trigger_conditions": [
+    "player_in_region:outer_settlements",
+    "time_range:06:00-12:00"
+  ],
+  "stages": [
+    {
+      "stage_id": "encounter",
+      "description": "Player finds Tinte cornered by a thornback boar near a supply cache.",
+      "check": { "type": "perception", "dc": 12 },
+      "success_outcome": "Player notices Tinte in time to intervene before injury.",
+      "failure_outcome": "Player arrives after Tinte has already taken a wound."
+    },
+    {
+      "stage_id": "resolution",
+      "description": "After the encounter resolves, Tinte explains his errand and offers to share the supplies as thanks.",
+      "check": null,
+      "success_outcome": "Tinte becomes recruitable as a companion.",
+      "failure_outcome": null
+    }
+  ],
+  "completion_rewards": {
+    "companion_unlocked": "tinte_apprentice",
+    "faction_change": { "faction_id": "witches_circle", "amount": 5 },
+    "items": []
+  }
+}

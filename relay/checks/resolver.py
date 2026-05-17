@@ -14,7 +14,6 @@ import random
 from relay.registry import (
     CONDITIONS,
     ENVIRONMENT_RULES,
-    EXHAUSTION_MAX,
     PASSIVE_SKILLS,
     SKILL_ABILITY,
     SKILLS,
@@ -432,6 +431,7 @@ def evaluate_passive_checks(
         return []
 
     triggered_ids = set(already_triggered or [])
+    passive_cache: dict[str, int] = {}
 
     triggered = []
     for element in hidden:
@@ -444,15 +444,17 @@ def evaluate_passive_checks(
         if skill not in PASSIVE_CHECK_SKILLS:
             skill = "perception"
 
-        dc = element.get("dc", 15)
-        passive_value = compute_passive_check(
-            skill,
-            ability_scores,
-            skill_proficiencies,
-            level,
-            conditions=conditions,
-        )
+        if skill not in passive_cache:
+            passive_cache[skill] = compute_passive_check(
+                skill,
+                ability_scores,
+                skill_proficiencies,
+                level,
+                conditions=conditions,
+            )
+        passive_value = passive_cache[skill]
 
+        dc = element.get("dc", 15)
         if passive_value >= dc:
             triggered.append(
                 {

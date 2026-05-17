@@ -85,7 +85,7 @@ class GameSession(Base):
     world_id: Mapped[str] = mapped_column(String, nullable=False)
     mode: Mapped[str] = mapped_column(String, nullable=False, default="solo")  # solo | multiplayer
     role: Mapped[str] = mapped_column(String, nullable=False, default="player")  # player | dm
-    status: Mapped[str] = mapped_column(String, nullable=False, default="active")  # active | ended
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active", index=True)  # active | ended
     session_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     analytics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
@@ -106,7 +106,7 @@ class Scene(Base):
     session_id: Mapped[str] = mapped_column(String, ForeignKey("sessions.id"), nullable=False, index=True)
     npc_id: Mapped[str] = mapped_column(String, nullable=False)
     mode: Mapped[str] = mapped_column(String, nullable=False, default="rp")  # rp | quickchat
-    status: Mapped[str] = mapped_column(String, nullable=False, default="active")  # active | ended
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active", index=True)  # active | ended
     scene_state: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     turn_history: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     turn_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -137,7 +137,7 @@ class PendingTurn(Base):
     turn_type: Mapped[str] = mapped_column(String, nullable=False)  # rp | quickchat
 
     # received -> analysis -> checks_resolved -> streaming -> complete | failed
-    stage: Mapped[str] = mapped_column(String, nullable=False, default="received")
+    stage: Mapped[str] = mapped_column(String, nullable=False, default="received", index=True)
 
     player_input: Mapped[str] = mapped_column(Text, nullable=False)
     character_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)

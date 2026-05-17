@@ -5,9 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relay.auth.middleware import require_session_token
@@ -31,7 +30,7 @@ from relay.combat.resolver import (
     saving_throw,
 )
 from relay.database import get_db
-from relay.models import Character
+from relay.endpoints._helpers import load_character_any, load_character_owned
 
 logger = logging.getLogger(__name__)
 
@@ -121,37 +120,6 @@ class RestResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-async def _load_character(db: AsyncSession, character_id: str, player_id: str) -> Character:
-    result = await db.execute(
-        select(Character).where(
-            Character.id == character_id,
-            Character.player_id == player_id,
-        )
-    )
-    char = result.scalar_one_or_none()
-    if not char:
-        raise HTTPException(
-            status_code=404, detail={"code": "character_not_found", "message": f"Character {character_id} not found"}
-        )
-    return char
-
-
-async def _load_character_any(db: AsyncSession, character_id: str) -> Character:
-    """Load a character without ownership check (for NPC targets)."""
-    result = await db.execute(select(Character).where(Character.id == character_id))
-    char = result.scalar_one_or_none()
-    if not char:
-        raise HTTPException(
-            status_code=404, detail={"code": "character_not_found", "message": f"Character {character_id} not found"}
-        )
-    return char
-
-
-# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -163,8 +131,8 @@ async def post_attack(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> AttackResponse:
     """Resolve a single attack: roll, hit/miss, damage, apply to target."""
-    attacker = await _load_character(db, body.attacker_id, token.player_id)
-    target = await _load_character_any(db, body.target_id)
+    attacker = await load_character_owned(db, body.attacker_id, token.player_id)
+    target = await load_character_any(db, body.target_id)
 
     attacker_conditions = attacker.conditions or []
     target_conditions = target.conditions or []
@@ -252,8 +220,8 @@ async def post_save(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> SaveResponse:
     """Force a saving throw on the defender."""
-    attacker = await _load_character(db, body.attacker_id, token.player_id)
-    defender = await _load_character_any(db, body.defender_id)
+    attacker = await load_character_owned(db, body.attacker_id, token.player_id)
+    defender = await load_character_any(db, body.defender_id)
 
     dc = compute_save_dc(attacker.ability_scores, attacker.level, body.dc_source_ability)
 
@@ -355,7 +323,7 @@ async def post_initiative(
     """Roll initiative for all participants and return turn order."""
     participants = []
     for pid in body.participant_ids:
-        char = await _load_character_any(db, pid)
+        char = await load_character_any(db, pid)
         participants.append({"id": char.id, "ability_scores": char.ability_scores})
 
     turn_order = determine_turn_order(participants)
@@ -369,7 +337,7 @@ async def post_heal(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> HealResponse:
     """Apply healing to a character, potentially leaving death state."""
-    target = await _load_character(db, body.target_id, token.player_id)
+    target = await load_character_owned(db, body.target_id, token.player_id)
 
     in_death_state = target.hp_current == 0
 
@@ -400,7 +368,7 @@ async def post_tick_conditions(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Advance condition durations and death state for a character."""
-    char = await _load_character(db, body.character_id, token.player_id)
+    char = await load_character_owned(db, body.character_id, token.player_id)
 
     conditions = list(char.conditions or [])
     conditions = tick_conditions(conditions, body.current_turn)
@@ -437,7 +405,7 @@ async def post_rest(
     """
     from relay.combat.conditions import reduce_exhaustion
 
-    char = await _load_character(db, body.character_id, token.player_id)
+    char = await load_character_owned(db, body.character_id, token.player_id)
 
     hp_before = char.hp_current
     exhaustion_before = char.exhaustion_level

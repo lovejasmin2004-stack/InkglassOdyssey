@@ -7,7 +7,8 @@
   "environmental_effects": [],
   "gathering_nodes": [
     { "item_id": "camphor_resin", "skill": "survival", "dc": 10 },
-    { "item_id": "moonpetal", "skill": "nature", "dc": 14 }
+    { "item_id": "moonpetal", "skill": "nature", "dc": 14 },
+    { "item_id": "iron_ore", "skill": "athletics", "dc": 12 }
   ],
   "fauna": ["thornveil_hare", "mud_viper"],
   "dominant_faction": "merchant_guild"

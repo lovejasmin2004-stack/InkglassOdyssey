@@ -1,6 +1,6 @@
 {
   "id": "camphor_resin",
-  "world": "inkglass_dark",
+  "world_id": "inkglass_dark",
   "name": "Camphor Resin",
   "type": "material",
   "rarity": "common",
@@ -9,5 +9,5 @@
   "description_prose": "A translucent lump of aromatic resin, harvested from camphor trees in the lower valleys. Used as a base for salves and poultices.",
   "binding": "unbound",
   "unique": false,
-  "stats": {}
+  "stats": null
 }

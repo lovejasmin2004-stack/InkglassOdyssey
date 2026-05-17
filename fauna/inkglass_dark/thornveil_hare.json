@@ -1,0 +1,11 @@
+{
+  "id": "thornveil_hare",
+  "world_id": "inkglass_dark",
+  "name": "Thornveil Hare",
+  "description": "A large, skittish hare with mottled brown fur adapted to the lowland hedgerows. Prized by trappers for its lean meat and soft pelt.",
+  "region_ids": ["thornveil_lowlands"],
+  "creature_type": "beast",
+  "level": 1,
+  "hostile": false,
+  "gathering_yields": ["hare_pelt", "raw_meat"]
+}

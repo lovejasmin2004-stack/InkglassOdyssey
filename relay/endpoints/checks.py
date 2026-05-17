@@ -14,7 +14,6 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relay.auth.middleware import require_session_token
@@ -27,7 +26,7 @@ from relay.checks.resolver import (
     validate_checks_batch,
 )
 from relay.database import get_db
-from relay.models import Character
+from relay.endpoints._helpers import load_character_any, load_character_owned
 
 logger = logging.getLogger(__name__)
 
@@ -103,18 +102,7 @@ async def post_implicit_checks(
     Validates and clamps LLM-proposed checks, then resolves against the
     character's ability scores, proficiencies, and conditions.
     """
-    result = await db.execute(
-        select(Character).where(
-            Character.id == body.character_id,
-            Character.player_id == token.player_id,
-        )
-    )
-    char = result.scalar_one_or_none()
-    if not char:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "character_not_found", "message": "Character not found"},
-        )
+    char = await load_character_owned(db, body.character_id, token.player_id)
 
     conditions = char.conditions or []
 
@@ -159,23 +147,8 @@ async def post_contested_check(
     Used for grapple (athletics vs athletics/acrobatics), deception vs insight,
     stealth vs perception, etc. Ties go to the defender.
     """
-    # Load attacker
-    att_result = await db.execute(select(Character).where(Character.id == body.attacker_character_id))
-    attacker = att_result.scalar_one_or_none()
-    if not attacker:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "character_not_found", "message": "Attacker character not found"},
-        )
-
-    # Load defender
-    def_result = await db.execute(select(Character).where(Character.id == body.defender_character_id))
-    defender = def_result.scalar_one_or_none()
-    if not defender:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "character_not_found", "message": "Defender character not found"},
-        )
+    attacker = await load_character_any(db, body.attacker_character_id)
+    defender = await load_character_any(db, body.defender_character_id)
 
     attacker_check = validate_check({"skill": body.attacker_skill, "dc": 0, "reason": body.reason})
     defender_check = validate_check({"skill": body.defender_skill, "dc": 0, "reason": body.reason})

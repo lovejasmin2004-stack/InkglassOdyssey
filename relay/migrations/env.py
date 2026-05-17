@@ -56,6 +56,16 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_online() -> None:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        raise RuntimeError(
+            "Alembic migrations must be run from the CLI (alembic upgrade head), "
+            "not from within a running async application."
+        )
     asyncio.run(run_async_migrations())
 
 

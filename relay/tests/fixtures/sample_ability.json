@@ -1,6 +1,6 @@
 {
   "id": "shadow_strike",
-  "world": "inkglass_dark",
+  "world_id": "inkglass_dark",
   "name": "Shadow Strike",
   "description": "Channel darkness into a precise melee attack that bypasses armour.",
   "ability_score": "dexterity",

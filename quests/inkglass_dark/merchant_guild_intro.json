@@ -3,7 +3,7 @@
   "world_id": "inkglass_dark",
   "name": "A Merchant's Favour",
   "description": "The Merchant Guild's local factor has lost a shipment to bandits along the Thornveil Road. Recover the crates and earn the Guild's gratitude.",
-  "giver_npc_id": "seta_inkglass_dark",
+  "giver_npc_id": "halvric_factor",
   "region_id": "thornveil_lowlands",
   "level_requirement": 1,
   "objectives": [

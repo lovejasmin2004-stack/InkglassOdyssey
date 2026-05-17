@@ -1,6 +1,6 @@
 {
   "id": "iron_longsword",
-  "world": "inkglass_dark",
+  "world_id": "inkglass_dark",
   "name": "Iron Longsword",
   "type": "weapon",
   "rarity": "common",

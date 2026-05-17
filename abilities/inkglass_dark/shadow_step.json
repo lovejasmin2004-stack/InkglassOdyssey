@@ -1,0 +1,14 @@
+{
+  "id": "shadow_step",
+  "world_id": "inkglass_dark",
+  "name": "Shadow Step",
+  "description": "A quick repositioning strike from a blind spot. The user darts forward with a precise thrust, exploiting gaps in the target's awareness.",
+  "ability_score": "dexterity",
+  "modifier_source": "dexterity",
+  "damage_dice": "1d6+2",
+  "damage_type": "piercing",
+  "cost": { "resource_type": "stamina", "amount": 1 },
+  "cooldown_turns": 2,
+  "level_requirement": 3,
+  "tags": ["martial", "melee", "offensive", "finesse"]
+}

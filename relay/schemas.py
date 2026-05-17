@@ -8,6 +8,23 @@ from pydantic import BaseModel, Field, StringConstraints
 
 from relay.registry import DAMAGE_TYPES
 
+# ---------------------------------------------------------------------------
+# Error response (CLAUDE.md §8.1)
+# ---------------------------------------------------------------------------
+
+
+class ErrorResponse(BaseModel):
+    """Canonical error envelope returned by all endpoints.
+
+    Matches CLAUDE.md §8.1: code (string), message (string),
+    turn_id (optional), narrative_hint (optional).
+    """
+
+    code: str
+    message: str
+    turn_id: str | None = None
+    narrative_hint: str | None = None
+
 
 # ---------------------------------------------------------------------------
 # Reusable field types
@@ -306,7 +323,7 @@ class AppliesCondition(BaseModel):
 
 class Ability(BaseModel):
     id: str
-    world: str
+    world_id: str
     name: str = Field(min_length=1)
     description: str
     ability_score: str
@@ -332,7 +349,7 @@ class Ability(BaseModel):
 
 class Item(BaseModel):
     id: str
-    world: str
+    world_id: str
     name: str = Field(min_length=1)
     type: Literal[
         "weapon", "armour", "shield", "consumable", "material", "tool", "quest"
@@ -344,6 +361,31 @@ class Item(BaseModel):
     binding: Literal["unbound", "bind_on_equip", "bind_on_acquire"]
     unique: bool
     stats: dict | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+# ---------------------------------------------------------------------------
+# Recipe
+# ---------------------------------------------------------------------------
+
+
+class RecipeMaterial(BaseModel):
+    item_id: str = Field(min_length=1)
+    quantity: int = Field(ge=1)
+
+
+class Recipe(BaseModel):
+    id: str = Field(min_length=1)
+    world_id: str = Field(min_length=1)
+    name: str | None = Field(default=None, min_length=1)
+    output_item_id: str = Field(min_length=1)
+    output_quantity: int = Field(default=1, ge=1)
+    input_materials: list[RecipeMaterial] = Field(min_length=1)
+    required_skill: str = Field(min_length=1)
+    skill_dc: int = Field(ge=1, le=30)
+    level_requirement: int = Field(ge=1, le=20)
+    required_station_type: str | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -407,5 +449,150 @@ class WorldConfig(BaseModel):
     rest_rules: RestRules
     economy_config: EconomyConfig
     environmental_effects_registry: list[dict] | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+# ---------------------------------------------------------------------------
+# Faction
+# ---------------------------------------------------------------------------
+
+
+class ReputationThresholds(BaseModel):
+    hostile: int
+    unfriendly: int
+    neutral: int
+    friendly: int
+    allied: int
+
+
+class Faction(BaseModel):
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    allied_factions: list[str]
+    rival_factions: list[str]
+    reputation_thresholds: ReputationThresholds
+    description: str
+
+    model_config = {"extra": "forbid"}
+
+
+# ---------------------------------------------------------------------------
+# Region
+# ---------------------------------------------------------------------------
+
+
+class GatheringNode(BaseModel):
+    item_id: str = Field(min_length=1)
+    skill: str = Field(min_length=1)
+    dc: int = Field(ge=1, le=30)
+
+
+class LevelRange(BaseModel):
+    min: int = Field(ge=1, le=20)
+    max: int = Field(ge=1, le=20)
+
+
+class Region(BaseModel):
+    id: str = Field(min_length=1)
+    world_id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    description: str
+    connections: list[str] = Field(default_factory=list)
+    environmental_effects: list[str] = Field(default_factory=list)
+    gathering_nodes: list[GatheringNode] | None = None
+    fauna: list[str] | None = None
+    dominant_faction: str | None = None
+    traversal_modes: list[str] | None = None
+    level_range: LevelRange | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+# ---------------------------------------------------------------------------
+# Lore
+# ---------------------------------------------------------------------------
+
+
+class Lore(BaseModel):
+    id: str = Field(min_length=1)
+    world_id: str = Field(min_length=1)
+    region_id: str | None = Field(default=None, min_length=1)
+    title: str = Field(min_length=1)
+    content: str = Field(min_length=1)
+    tags: list[str] = Field(min_length=1)
+    related_npcs: list[str] | None = None
+    related_factions: list[str] | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+# ---------------------------------------------------------------------------
+# Fauna
+# ---------------------------------------------------------------------------
+
+
+class Fauna(BaseModel):
+    id: str = Field(min_length=1)
+    world_id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    description: str
+    region_ids: list[str] = Field(min_length=1)
+    creature_type: str = Field(min_length=1)
+    level: int = Field(ge=1, le=20)
+    hostile: bool = False
+    gathering_yields: list[str] | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+# ---------------------------------------------------------------------------
+# Scenario
+# ---------------------------------------------------------------------------
+
+
+class ScenarioCheck(BaseModel):
+    type: str = Field(min_length=1)
+    dc: int = Field(ge=1, le=30)
+
+
+class ScenarioStage(BaseModel):
+    stage_id: str = Field(min_length=1)
+    description: str
+    check: ScenarioCheck | None = None
+    success_outcome: str | None = None
+    failure_outcome: str | None = None
+
+
+class ScenarioPrerequisites(BaseModel):
+    faction_requirements: list[str] = Field(default_factory=list)
+    quest_requirements: list[str] = Field(default_factory=list)
+    min_relationship_with_npc: int | None = None
+
+
+class ScenarioFactionChange(BaseModel):
+    faction_id: str = Field(min_length=1)
+    amount: int = Field(ge=-100, le=100)
+
+
+class ScenarioRewards(BaseModel):
+    companion_unlocked: str | None = None
+    faction_change: ScenarioFactionChange | None = None
+    items: list[str] = Field(default_factory=list)
+
+
+class Scenario(BaseModel):
+    id: str = Field(min_length=1)
+    world_id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    description: str
+    type: str = Field(min_length=1)
+    companion_npc_id: str | None = None
+    region_id: str = Field(min_length=1)
+    level_range: LevelRange
+    prerequisites: ScenarioPrerequisites
+    trigger_conditions: list[str] = Field(min_length=1)
+    stages: list[ScenarioStage] = Field(min_length=1)
+    completion_rewards: ScenarioRewards
 
     model_config = {"extra": "forbid"}

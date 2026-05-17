@@ -1,6 +1,6 @@
 {
   "id": "leather_armour",
-  "world": "inkglass_dark",
+  "world_id": "inkglass_dark",
   "name": "Leather Armour",
   "type": "armour",
   "rarity": "common",

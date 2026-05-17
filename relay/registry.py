@@ -110,17 +110,17 @@ class ConditionDef:
     """
 
     __slots__ = (
-        "id",
-        "rider_conditions",
+        "auto_fail_dexterity_saves",
+        "auto_fail_strength_saves",
         "disadvantage_on_all_checks",
-        "disadvantage_on_skills",
         "disadvantage_on_attacks",
         "disadvantage_on_saves",
+        "disadvantage_on_skills",
         "grants_advantage_to_attackers",
-        "auto_fail_strength_saves",
-        "auto_fail_dexterity_saves",
-        "speed_zero",
+        "id",
         "incapacitated",
+        "rider_conditions",
+        "speed_zero",
     )
 
     def __init__(

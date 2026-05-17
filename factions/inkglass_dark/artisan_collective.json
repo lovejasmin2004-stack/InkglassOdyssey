@@ -2,5 +2,13 @@
   "id": "artisan_collective",
   "name": "Artisan Collective",
   "allied_factions": ["merchant_guild"],
-  "rival_factions": []
+  "rival_factions": [],
+  "reputation_thresholds": {
+    "hostile": -51,
+    "unfriendly": -50,
+    "neutral": 0,
+    "friendly": 1,
+    "allied": 51
+  },
+  "description": "A loose federation of smiths, weavers, alchemists, and enchanters who share resources and techniques. They value craftsmanship above profit and maintain strict quality standards."
 }

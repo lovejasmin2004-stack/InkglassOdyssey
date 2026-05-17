@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from relay.auth.tokens import create_account_token, create_session_token
+
 from relay.companions.ambient import (
     compute_mood_modifier,
     find_world_event_reaction,
@@ -556,25 +556,6 @@ class TestWorldEventReaction:
 # ===========================================================================
 # Integration tests — endpoints
 # ===========================================================================
-
-
-@pytest.fixture()
-def session_header():
-    token = create_session_token(
-        player_id="player_001",
-        world_id="inkglass_dark",
-        session_id="sess_001",
-        tier=1,
-        role="player",
-        mode="solo",
-    )
-    return {"Authorization": f"Bearer {token}"}
-
-
-@pytest.fixture()
-def auth_header():
-    token = create_account_token(player_id="player_001", tier=1)
-    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture()

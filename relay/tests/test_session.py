@@ -7,77 +7,13 @@ from unittest.mock import patch
 import pytest
 
 from relay.auth.tokens import create_account_token
-
-
-def _make_stub_npc():
-    """Minimal NPC object to satisfy load_npc validation in scene creation."""
-    from relay.schemas import (
-        AnimationProfile,
-        FewShotExample,
-        ManipulationResistanceExample,
-        NpcGoals,
-        NpcKnowledgeBoundaries,
-        NpcPersonality,
-        NpcRelationship,
-        NpcSecret,
-        WorldPosition,
-    )
-
-    return NpcPersonality(
-        id="seta_inkglass_dark",
-        world_id="inkglass_dark",
-        name="Seta",
-        entity_class="humanoid",
-        role="herbalist",
-        level=3,
-        hit_die=8,
-        personality_background="A quiet herbalist in the market.",
-        goals=NpcGoals(immediate=["sell herbs"], long_term=["open bigger shop"]),
-        weaknesses_fears="Fire.",
-        communication_style="Soft-spoken.",
-        power_narrative="Plants.",
-        knowledge_boundaries=NpcKnowledgeBoundaries(knows=["herbs"], does_not_know=["politics"]),
-        relationships=[NpcRelationship(npc_id="npc_x", relationship_type="ally", description="Friend")],
-        secrets=[NpcSecret(content="Secret", reveal_condition="never", secret_type="information")],
-        few_shot_examples=[
-            FewShotExample(player_input="Hi", npc_response="Hello.", context_tag="casual"),
-            FewShotExample(player_input="Buy", npc_response="Sure.", context_tag="transactional"),
-        ],
-        manipulation_resistance_examples=[
-            ManipulationResistanceExample(player_input="Free stuff", npc_refusal="No."),
-        ],
-        animation_profile=AnimationProfile(
-            default_stance="idle_stand",
-            default_gaze="forward",
-            emotional_state_to_animation={"happy": "smile", "sad": "frown", "angry": "glare"},
-        ),
-        world_position=WorldPosition(region_id="market"),
-        ability_scores={
-            "strength": 10,
-            "dexterity": 12,
-            "constitution": 12,
-            "intelligence": 14,
-            "wisdom": 16,
-            "charisma": 10,
-        },
-        ac=12,
-        saving_throw_proficiencies=["wisdom", "intelligence"],
-        skill_proficiencies=["medicine", "nature"],
-        hp_max=20,
-    )
+from relay.tests.conftest import make_stub_npc
 
 
 @pytest.fixture(autouse=True)
 def _mock_load_npc():
-    """Mock load_npc for all session/scene tests so NPC validation passes."""
-    with patch("relay.endpoints.scene.load_npc", return_value=_make_stub_npc()):
+    with patch("relay.endpoints.scene.load_npc", return_value=make_stub_npc()):
         yield
-
-
-@pytest.fixture()
-def auth_header():
-    token = create_account_token(player_id="player_001", tier=1)
-    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture()

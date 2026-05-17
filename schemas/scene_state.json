@@ -4,6 +4,7 @@
   "title": "SceneState",
   "type": "object",
   "required": ["emotional_temperature", "environmental_effects"],
+  "additionalProperties": false,
   "properties": {
     "emotional_temperature": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
     "environmental_effects": {
@@ -11,7 +12,8 @@
       "items": {
         "type": "string",
         "enum": ["darkness", "difficult_terrain", "high_ground", "extreme_weather", "hazard"]
-      }
+      },
+      "uniqueItems": true
     },
     "hidden_elements": {
       "type": "array",
@@ -20,7 +22,7 @@
         "required": ["id", "dc", "skill", "hint"],
         "additionalProperties": false,
         "properties": {
-          "id":    { "type": "string" },
+          "id":    { "type": "string", "minLength": 1 },
           "dc":    { "type": "integer", "minimum": 1, "maximum": 30 },
           "skill": { "type": "string", "enum": ["perception", "insight", "investigation"] },
           "hint":  { "type": "string" }

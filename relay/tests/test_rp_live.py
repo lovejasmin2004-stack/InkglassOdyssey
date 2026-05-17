@@ -90,7 +90,7 @@ async def main() -> None:
                 full_text += msg["text"]
 
             elif t == "stream_end":
-                print(f"\n\n--- stream_end ---")
+                print("\n\n--- stream_end ---")
                 break
 
             elif t == "error":

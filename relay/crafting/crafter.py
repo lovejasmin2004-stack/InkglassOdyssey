@@ -47,6 +47,13 @@ class StationRequiredError(Exception):
         super().__init__(f"Requires station '{required}', have '{available}'")
 
 
+class RecipeNotFoundError(Exception):
+    def __init__(self, recipe_id: str, world_id: str) -> None:
+        self.recipe_id = recipe_id
+        self.world_id = world_id
+        super().__init__(f"Recipe '{recipe_id}' not found in world '{world_id}'")
+
+
 def validate_recipe_requirements(
     recipe: dict,
     character_level: int,
@@ -98,15 +105,23 @@ def consume_materials(
     input_materials: list[dict],
     inventory: list[dict],
 ) -> list[dict]:
-    """Remove crafting materials from inventory. Returns updated inventory."""
+    """Remove crafting materials from inventory. Returns updated inventory.
+
+    Prefers consuming unbound stacks before bound stacks.
+    """
     consumption: dict[str, int] = {}
     for mat in input_materials:
         consumption[mat["item_id"]] = consumption.get(mat["item_id"], 0) + mat["quantity"]
 
+    unbound_first = sorted(
+        inventory,
+        key=lambda e: 0 if e.get("binding_state") == "unbound" else 1,
+    )
+
     updated = []
-    for entry in inventory:
+    for entry in unbound_first:
         item_id = entry.get("item_id", "")
-        if item_id in consumption:
+        if item_id in consumption and consumption[item_id] > 0:
             remaining_to_consume = consumption[item_id]
             current_qty = entry.get("quantity", 0)
             if remaining_to_consume >= current_qty:
@@ -150,18 +165,13 @@ def has_tool_advantage(
     """Check if equipped gear grants advantage on a craft check.
 
     A tool grants advantage if its associated_skill matches the recipe's required_skill.
-
-    Note: currently accepts tools in *any* gear slot.  When equip endpoints
-    are implemented (Phase 2), consider restricting to ``tool_slot`` /
-    ``off_hand`` so that a weapon with ``item_type: "tool"`` in main_hand
-    doesn't accidentally grant crafting advantage.
+    Only items in the tool_slot are considered (prevents weapons in main_hand from
+    accidentally granting crafting advantage).
     """
-    for _slot, item in equipped_gear.items():
-        if not isinstance(item, dict):
-            continue
-        if item.get("item_type") == "tool" and item.get("associated_skill") == required_skill:
-            return True
-    return False
+    tool = equipped_gear.get("tool_slot")
+    if not isinstance(tool, dict):
+        return False
+    return tool.get("item_type") == "tool" and tool.get("associated_skill") == required_skill
 
 
 def produce_output(

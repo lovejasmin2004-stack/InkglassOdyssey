@@ -91,7 +91,7 @@ async def patch_standing(
         )
 
     standings = dict(char.faction_standing or {})
-    faction_registry = load_faction_registry(token.world_id)
+    faction_registry = await load_faction_registry(token.world_id)
     changes = apply_standing_change(
         standings,
         faction_id,

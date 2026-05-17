@@ -406,7 +406,7 @@ async def _handle_quickchat(
         return
 
     try:
-        npc = load_npc(npc_id, world_id=world_id or None)  # (#R5)
+        npc = await load_npc(npc_id, world_id=world_id or None)  # (#R5)
     except NpcLoadError as exc:
         logger.error("NPC file corrupt", extra={"npc_id": npc_id, "error": str(exc)})
         await _send_error(ws, "npc_load_error", f"NPC '{npc_id}' exists but failed to load: {exc}")
@@ -515,7 +515,7 @@ async def _handle_rp_turn(
         return
 
     try:
-        npc = load_npc(npc_id, world_id=world_id or None)  # (#R5)
+        npc = await load_npc(npc_id, world_id=world_id or None)  # (#R5)
     except NpcLoadError as exc:
         logger.error("NPC file corrupt", extra={"npc_id": npc_id, "error": str(exc)})
         await _send_error(ws, "npc_load_error", f"NPC '{npc_id}' exists but failed to load: {exc}")
@@ -1160,7 +1160,7 @@ async def _handle_turn_resume(
     # For earlier stages, we need to re-run the LLM pipeline.
     # Load NPC and scene state fresh.
     try:
-        npc = load_npc(npc_id, world_id=world_id or None)
+        npc = await load_npc(npc_id, world_id=world_id or None)
     except NpcLoadError as exc:
         await fail_turn(turn_id, f"npc_load_error: {exc}")
         await _send_error(ws, "npc_load_error", f"NPC '{npc_id}' failed to load: {exc}")

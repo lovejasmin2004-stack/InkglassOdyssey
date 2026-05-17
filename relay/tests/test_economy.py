@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from relay.auth.tokens import create_account_token, create_session_token
+from relay.auth.tokens import create_account_token
 from relay.economy.pricing import (
     compute_buy_price,
     compute_sell_price,
@@ -40,24 +40,6 @@ from relay.schemas import (
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
-def auth_header():
-    token = create_account_token(player_id="player_001", tier=1)
-    return {"Authorization": f"Bearer {token}"}
-
-
-@pytest.fixture()
-def session_header():
-    """Session token for endpoints that require require_session_token."""
-    token = create_session_token(
-        player_id="player_001",
-        world_id="inkglass_dark",
-        session_id="sess_econ_001",
-        tier=1,
-        role="player",
-        mode="solo",
-    )
-    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture()
@@ -190,7 +172,7 @@ def _make_item(
 ) -> Item:
     return Item(
         id=item_id,
-        world="inkglass_dark",
+        world_id="inkglass_dark",
         name=name,
         type=item_type,
         rarity=rarity,
@@ -983,50 +965,29 @@ class TestQuestReward:
 class TestGatherTransactionLog:
     """#11 — successful gather creates a transaction log entry."""
 
-    @patch("relay.endpoints.craft.resolve_check")
-    @patch("relay.endpoints.craft.validate_check")
     def test_gather_creates_transaction(
         self,
-        mock_validate,
-        mock_resolve,
         db_client,
         auth_header,
         session_header,
         character_id,
     ):
-        mock_validate.return_value = {"skill": "survival", "dc": 10, "reason": "Gather"}
-        mock_resolve.return_value = {
-            "skill": "survival",
-            "dc": 10,
-            "roll": 15,
-            "total": 17,
-            "passed": True,
-            "advantage": False,
-            "disadvantage": False,
-            "dice": [15],
-            "ability_modifier": 2,
-            "proficiency_bonus": 0,
-        }
-
-        with patch("relay.crafting.gathering.random.randint", return_value=3):
+        # Mock: first call is the d20 check roll (passes DC 10),
+        # second call is the yield randint(1, 3) → 2.
+        with patch("relay.checks.resolver.random.randint", side_effect=[15, 2]):
             resp = db_client.post(
                 "/gather",
                 json={
                     "character_id": character_id,
-                    "node": {
-                        "material_id": "iron_ore",
-                        "skill": "survival",
-                        "dc": 10,
-                        "yield_min": 1,
-                        "yield_max": 5,
-                    },
+                    "region_id": "thornveil_lowlands",
+                    "node_item_id": "camphor_resin",
                 },
                 headers=session_header,
             )
 
         assert resp.status_code == 200
         assert resp.json()["success"] is True
-        assert resp.json()["quantity"] == 3
+        assert resp.json()["quantity"] == 2
 
         # Verify transaction log has a gather entry
         tx_resp = db_client.get(
@@ -1036,5 +997,5 @@ class TestGatherTransactionLog:
         txns = tx_resp.json()["transactions"]
         gather_txns = [t for t in txns if t["tx_type"] == "gather"]
         assert len(gather_txns) == 1
-        assert gather_txns[0]["item_id"] == "iron_ore"
-        assert gather_txns[0]["item_quantity"] == 3
+        assert gather_txns[0]["item_id"] == "camphor_resin"
+        assert gather_txns[0]["item_quantity"] == 2

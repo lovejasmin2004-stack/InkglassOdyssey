@@ -21,17 +21,31 @@
     "specialisation_path_id":  { "type": "string" },
     "ability_scores": {
       "type": "object",
-      "additionalProperties": { "type": "integer" }
+      "required": ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"],
+      "additionalProperties": false,
+      "properties": {
+        "strength":     { "type": "integer", "minimum": 1, "maximum": 30 },
+        "dexterity":    { "type": "integer", "minimum": 1, "maximum": 30 },
+        "constitution": { "type": "integer", "minimum": 1, "maximum": 30 },
+        "intelligence": { "type": "integer", "minimum": 1, "maximum": 30 },
+        "wisdom":       { "type": "integer", "minimum": 1, "maximum": 30 },
+        "charisma":     { "type": "integer", "minimum": 1, "maximum": 30 }
+      }
     },
     "skill_proficiencies": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "type": "string" },
+      "uniqueItems": true
     },
     "saving_throw_proficiencies": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string",
+        "enum": ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
+      },
       "minItems": 2,
-      "maxItems": 2
+      "maxItems": 2,
+      "uniqueItems": true
     },
     "hp_current":        { "type": "integer" },
     "hp_max":            { "type": "integer", "minimum": 1 },
@@ -71,6 +85,7 @@
       "additionalProperties": {
         "type": "object",
         "required": ["current", "max"],
+        "additionalProperties": false,
         "properties": {
           "current": { "type": "integer", "minimum": 0 },
           "max":     { "type": "integer", "minimum": 0 }
@@ -100,7 +115,8 @@
     },
     "known_recipes": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "type": "string" },
+      "uniqueItems": true
     },
     "companions": {
       "type": "array",
