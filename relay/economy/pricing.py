@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import math
 
+from relay.factions.reputation import resolve_tier
+
 # ---------------------------------------------------------------------------
 # Faction standing → tier mapping (docs/faction system.pdf §Standing Tiers)
 # ---------------------------------------------------------------------------
@@ -28,20 +30,11 @@ import math
 def faction_tier(standing: int) -> str:
     """Map a numeric faction standing (-100..100) to a named tier.
 
-    Thresholds from docs/faction system.pdf:
-      hostile: -100 to -51, unfriendly: -50 to -1, neutral: 0,
-      friendly: 1 to 50, allied: 51 to 100.
+    Delegates to :func:`relay.factions.reputation.resolve_tier` with
+    :data:`DEFAULT_THRESHOLDS`.  Retained for backward compatibility;
+    prefer ``resolve_tier`` for new code.
     """
-    standing = max(-100, min(100, standing))
-    if standing >= 51:
-        return "allied"
-    if standing >= 1:
-        return "friendly"
-    if standing == 0:
-        return "neutral"
-    if standing >= -50:
-        return "unfriendly"
-    return "hostile"
+    return resolve_tier(standing)
 
 
 # Faction tier → sell-back ratio adjustment (additive on the 0.5 base)
@@ -71,11 +64,6 @@ def _resolve_tier(
     reputation_thresholds: dict[str, int] | None,
 ) -> str:
     """Resolve tier using custom thresholds when available, else defaults."""
-    if reputation_thresholds is None:
-        return faction_tier(standing)
-    # Lazy import to avoid circular dependency (reputation → pricing → reputation)
-    from relay.factions.reputation import resolve_tier
-
     return resolve_tier(standing, reputation_thresholds)
 
 
@@ -138,6 +126,7 @@ def compute_sell_price(
     faction_id: str | None = None,
     character_faction_standing: dict[str, int] | None = None,
     reputation_thresholds: dict[str, int] | None = None,
+    shop_price_modifiers: dict[str, float] | None = None,
 ) -> int:
     """Compute the sell price for an item.
 
@@ -145,6 +134,11 @@ def compute_sell_price(
     ----------
     reputation_thresholds : dict[str, int] | None
         Per-faction custom tier boundaries. See :func:`compute_buy_price`.
+    shop_price_modifiers : dict[str, float] | None
+        Per-faction sell-price multipliers (tier → multiplier). When
+        provided, the multiplier replaces the global
+        ``_FACTION_SELL_MODIFIER`` additive adjustment: the effective
+        sell price is ``base_value * sell_back_ratio * multiplier``.
 
     Returns
     -------
@@ -154,7 +148,10 @@ def compute_sell_price(
     standing = _resolve_standing(faction_standing, faction_id, character_faction_standing)
     tier = _resolve_tier(standing, reputation_thresholds)
 
-    effective_ratio = sell_back_ratio + _FACTION_SELL_MODIFIER[tier]
+    if shop_price_modifiers and tier in shop_price_modifiers:
+        effective_ratio = sell_back_ratio * shop_price_modifiers[tier]
+    else:
+        effective_ratio = sell_back_ratio + _FACTION_SELL_MODIFIER[tier]
     effective_ratio = max(0.0, min(1.0, effective_ratio))
     return max(0, math.floor(base_value * effective_ratio))
 

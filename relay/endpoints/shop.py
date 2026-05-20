@@ -140,9 +140,7 @@ def _check_access_prerequisites(npc: NpcPersonality, character) -> None:
         )
 
     if prereqs.faction_standing_threshold is not None:
-        faction_id = npc.faction_id
-        if faction_id is None and npc.world_position:
-            faction_id = npc.world_position.region_id
+        faction_id = _npc_faction_id(npc)
         standings = character.faction_standing or {}
         standing = standings.get(faction_id, 0) if faction_id else 0
         if standing < prereqs.faction_standing_threshold:
@@ -192,14 +190,16 @@ async def get_shop(
     faction_id = _npc_faction_id(npc)
     faction_def = await _load_faction_data(faction_id, character.world_id)
     thresholds = _extract_thresholds(faction_def)
-    price_modifiers = _extract_price_modifiers(faction_def)
+    buy_modifiers = _extract_price_modifiers(faction_def, side="buy")
+    sell_modifiers = _extract_price_modifiers(faction_def, side="sell")
 
     quotes = get_shop_prices(
         npc=npc,
         items=items,
         character=character,
         reputation_thresholds=thresholds,
-        shop_price_modifiers=price_modifiers,
+        shop_price_modifiers=buy_modifiers,
+        shop_sell_modifiers=sell_modifiers,
     )
 
     total = len(quotes)

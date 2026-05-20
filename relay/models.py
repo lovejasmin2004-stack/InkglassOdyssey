@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import sqlalchemy as sa
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
@@ -162,6 +163,40 @@ class PendingTurn(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 
     scene: Mapped[Scene] = relationship("Scene", back_populates="pending_turns")
+
+
+class FactionStandingLog(Base):
+    """Immutable log of faction standing changes.
+
+    Every standing change — direct or propagated — gets a row.
+    Provides audit trail for debugging ("why is my standing -47?") and
+    analytics (tier transition frequency, propagation impact).
+    """
+
+    __tablename__ = "faction_standing_log"
+    __table_args__ = (sa.Index("ix_fsl_char_faction_created", "character_id", "faction_id", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    player_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id"), nullable=False, index=True)
+    character_id: Mapped[str] = mapped_column(String, ForeignKey("characters.id"), nullable=False, index=True)
+    world_id: Mapped[str] = mapped_column(String, nullable=False)
+    faction_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+
+    old_standing: Mapped[int] = mapped_column(Integer, nullable=False)
+    new_standing: Mapped[int] = mapped_column(Integer, nullable=False)
+    delta: Mapped[int] = mapped_column(Integer, nullable=False)
+    old_tier: Mapped[str] = mapped_column(String, nullable=False)
+    new_tier: Mapped[str] = mapped_column(String, nullable=False)
+    tier_changed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # "direct" | "allied_propagation" | "rival_propagation"
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    # Which faction triggered propagation (None for direct changes)
+    source_faction_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    reason: Mapped[str] = mapped_column(String, nullable=False, default="")
+    session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
 
 
 class TransactionLog(Base):

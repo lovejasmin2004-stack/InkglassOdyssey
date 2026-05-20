@@ -36,10 +36,26 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "allied":     { "type": "number" },
-        "friendly":   { "type": "number" },
-        "neutral":    { "type": "number" },
-        "unfriendly": { "type": "number" }
+        "buy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allied":     { "type": "number" },
+            "friendly":   { "type": "number" },
+            "neutral":    { "type": "number" },
+            "unfriendly": { "type": "number" }
+          }
+        },
+        "sell": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allied":     { "type": "number" },
+            "friendly":   { "type": "number" },
+            "neutral":    { "type": "number" },
+            "unfriendly": { "type": "number" }
+          }
+        }
       }
     },
     "notable_npcs": {

@@ -475,18 +475,31 @@ class ReputationThresholds(BaseModel):
         return self
 
 
-class ShopPriceModifiers(BaseModel):
-    """Per-faction buy-price multipliers (docs/faction system.pdf).
+class TierModifiers(BaseModel):
+    """Per-tier price multipliers (docs/faction system.pdf).
 
-    Values are direct multipliers applied to the markup-adjusted price:
-    0.80 means "allied pays 80% of base+markup" (a 20% discount).
-    When not provided on a faction, the global defaults in pricing.py apply.
+    Values are direct multipliers: 0.80 means "pay 80% of base+markup"
+    (a 20% discount). When a tier is None the global default applies.
     """
 
     allied: float | None = None
     friendly: float | None = None
     neutral: float | None = None
     unfriendly: float | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+class ShopPriceModifiers(BaseModel):
+    """Per-faction price multipliers for buy and sell sides.
+
+    ``buy``: multipliers applied to the markup-adjusted buy price.
+    ``sell``: multipliers applied to the sell-back price.
+    When not provided on a faction, the global defaults in pricing.py apply.
+    """
+
+    buy: TierModifiers | None = None
+    sell: TierModifiers | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -503,6 +516,14 @@ class Faction(BaseModel):
     notable_npcs: list[str] | None = None
 
     model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def _no_ally_rival_overlap(self) -> Faction:
+        """A faction cannot appear in both allied_factions and rival_factions."""
+        overlap = set(self.allied_factions) & set(self.rival_factions)
+        if overlap:
+            raise ValueError(f"Faction cannot be both allied and rival: {sorted(overlap)}")
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -611,7 +632,7 @@ class ScenarioPrerequisites(BaseModel):
 
 
 class ScenarioFactionChange(BaseModel):
-    faction_id: str = Field(min_length=1)
+    faction_id: str = Field(min_length=1, pattern=r"^[a-z][a-z0-9_]*$")
     amount: int = Field(ge=-100, le=100)
 
 

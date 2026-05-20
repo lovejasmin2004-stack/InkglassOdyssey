@@ -21,10 +21,10 @@ from relay.economy.pricing import (
     DEFAULT_SELL_BACK_RATIO,
     compute_buy_price,
     compute_sell_price,
-    faction_tier,
     is_hostile,
 )
 from relay.economy.wallet import credit, debit
+from relay.factions.reputation import resolve_tier
 from relay.models import Character
 from relay.schemas import Item, NpcPersonality, ShopInventoryEntry
 
@@ -107,6 +107,7 @@ def get_shop_prices(
     sell_back_ratio: float = DEFAULT_SELL_BACK_RATIO,
     reputation_thresholds: dict[str, int] | None = None,
     shop_price_modifiers: dict[str, float] | None = None,
+    shop_sell_modifiers: dict[str, float] | None = None,
 ) -> list[PriceQuote]:
     """Compute buy/sell prices for all items in a shop NPC's inventory.
 
@@ -124,6 +125,8 @@ def get_shop_prices(
         Per-faction custom tier boundaries from the faction definition.
     shop_price_modifiers : dict[str, float] | None
         Per-faction buy-price multipliers (tier → multiplier).
+    shop_sell_modifiers : dict[str, float] | None
+        Per-faction sell-price multipliers (tier → multiplier).
 
     Returns
     -------
@@ -137,12 +140,7 @@ def get_shop_prices(
     standings = character.faction_standing or {}
     standing = standings.get(faction_id, 0) if faction_id else 0
 
-    if reputation_thresholds:
-        from relay.factions.reputation import resolve_tier
-
-        tier = resolve_tier(standing, reputation_thresholds)
-    else:
-        tier = faction_tier(standing)
+    tier = resolve_tier(standing, reputation_thresholds)
 
     quotes: list[PriceQuote] = []
     for entry in npc.shop_data.inventory:
@@ -166,6 +164,7 @@ def get_shop_prices(
             sell_back_ratio=sell_back_ratio,
             faction_standing=standing,
             reputation_thresholds=reputation_thresholds,
+            shop_price_modifiers=shop_sell_modifiers,
         )
 
         quotes.append(
@@ -203,15 +202,36 @@ def _extract_thresholds(faction_def: dict[str, Any] | None) -> dict[str, int] | 
     return faction_def.get("reputation_thresholds")
 
 
-def _extract_price_modifiers(faction_def: dict[str, Any] | None) -> dict[str, float] | None:
-    """Extract shop_price_modifiers from a loaded faction definition."""
+def _extract_price_modifiers(
+    faction_def: dict[str, Any] | None,
+    side: str = "buy",
+) -> dict[str, float] | None:
+    """Extract shop_price_modifiers for a given side from a loaded faction definition.
+
+    Parameters
+    ----------
+    faction_def : dict or None
+        The loaded faction JSON dict.
+    side : str
+        ``"buy"`` or ``"sell"``.
+
+    Returns
+    -------
+    dict[str, float] | None
+        Flat ``{tier: multiplier}`` mapping, or None when unavailable.
+    """
     if faction_def is None:
         return None
     mods = faction_def.get("shop_price_modifiers")
     if mods is None:
         return None
-    # Convert from nested Pydantic-style to flat {tier: multiplier}
-    return {k: v for k, v in mods.items() if v is not None}
+    side_mods = mods.get(side)
+    if side_mods is None:
+        return None
+    if isinstance(side_mods, dict):
+        return {k: v for k, v in side_mods.items() if v is not None}
+    # Pydantic model (TierModifiers) — dump to dict
+    return {k: v for k, v in side_mods.model_dump().items() if v is not None} or None
 
 
 async def buy_item(
@@ -268,12 +288,7 @@ async def buy_item(
         raise OutOfStockError(f"Shop has {shop_entry.stock_quantity} of '{item.id}', requested {quantity}")
 
     # Compute price
-    if thresholds:
-        from relay.factions.reputation import resolve_tier
-
-        tier = resolve_tier(standing, thresholds)
-    else:
-        tier = faction_tier(standing)
+    tier = resolve_tier(standing, thresholds)
 
     unit_price = compute_buy_price(
         base_value=item.value,
@@ -366,10 +381,11 @@ async def sell_item(
     if npc.shop_data is None:
         raise ShopError(f"NPC '{npc.id}' is not a shop")
 
-    # Load faction data for custom thresholds
+    # Load faction data for custom thresholds and sell-side modifiers
     faction_id = _npc_faction_id(npc)
     faction_def = await _load_faction_data(faction_id, character.world_id)
     thresholds = _extract_thresholds(faction_def)
+    sell_modifiers = _extract_price_modifiers(faction_def, side="sell")
 
     standings = character.faction_standing or {}
     standing = standings.get(faction_id, 0) if faction_id else 0
@@ -392,25 +408,24 @@ async def sell_item(
         raise BoundItemCannotSellError(f"Item '{item.id}' is bound and cannot be sold")
 
     # Compute sell price
-    if thresholds:
-        from relay.factions.reputation import resolve_tier
-
-        tier = resolve_tier(standing, thresholds)
-    else:
-        tier = faction_tier(standing)
+    tier = resolve_tier(standing, thresholds)
 
     unit_price = compute_sell_price(
         base_value=item.value,
         sell_back_ratio=sell_back_ratio,
         faction_standing=standing,
         reputation_thresholds=thresholds,
+        shop_price_modifiers=sell_modifiers,
     )
     total_price = unit_price * quantity
 
     # Compute effective sell-back ratio for audit trail
-    from relay.economy.pricing import _FACTION_SELL_MODIFIER
+    if sell_modifiers and tier in sell_modifiers:
+        effective_sell_ratio = sell_back_ratio * sell_modifiers[tier]
+    else:
+        from relay.economy.pricing import _FACTION_SELL_MODIFIER
 
-    effective_sell_ratio = sell_back_ratio + _FACTION_SELL_MODIFIER.get(tier, 0.0)
+        effective_sell_ratio = sell_back_ratio + _FACTION_SELL_MODIFIER.get(tier, 0.0)
     effective_sell_ratio = max(0.0, min(1.0, effective_sell_ratio))
 
     # Credit wallet
@@ -468,19 +483,12 @@ async def sell_item(
 def _npc_faction_id(npc: NpcPersonality) -> str | None:
     """Derive the faction ID for an NPC.
 
-    Checks for an explicit ``faction_id`` on the NPC first (from npc_personality
-    schema).  Falls back to ``world_position.region_id`` as a convention.
-    Returns None (neutral pricing) if neither is available.
+    Returns the explicit ``faction_id`` from the NPC personality, or
+    ``None`` for neutral pricing.  Region IDs are *not* used as a
+    fallback — a region is not a faction and would produce invalid
+    faction lookups.
     """
-    if npc.faction_id:
-        return npc.faction_id
-    if npc.world_position:
-        logger.debug(
-            "NPC lacks explicit faction_id — falling back to region_id for pricing",
-            extra={"npc_id": npc.id, "region_id": npc.world_position.region_id},
-        )
-        return npc.world_position.region_id
-    return None
+    return npc.faction_id or None
 
 
 def _find_shop_entry(npc: NpcPersonality, item_id: str) -> ShopInventoryEntry | None:

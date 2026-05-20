@@ -1,13 +1,14 @@
 {
   "id": "thieves_den",
+  "world_id": "inkglass_dark",
   "name": "Thieves' Den",
   "allied_factions": [],
   "rival_factions": ["merchant_guild", "knights_moralis"],
   "reputation_thresholds": {
     "hostile": -51,
     "unfriendly": -50,
-    "neutral": 0,
-    "friendly": 1,
+    "neutral": -10,
+    "friendly": 11,
     "allied": 51
   },
   "description": "An underground network of cutpurses, fences, and information brokers operating from the city's underbelly. Loyalty is earned through deeds, not coin."

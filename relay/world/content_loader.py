@@ -94,31 +94,91 @@ async def load_faction_registry(world_id: str) -> dict[str, dict[str, Any]]:
     """Load all faction definitions for a world.
 
     Returns a dict keyed by faction_id.
+
+    Cache consistency: takes a snapshot of cached entries under the lock,
+    reads uncached files outside the lock (no I/O under lock), then merges
+    newly loaded entries back into the cache atomically.  This prevents
+    inconsistent snapshots where some factions reflect the old state and
+    others reflect a concurrent invalidation.
     """
     world_dir = _FACTIONS_ROOT / world_id
     if not world_dir.is_dir():
         return {}
 
+    prefix = f"{world_id}:"
+
+    # Snapshot cached entries under the lock (fast — no I/O)
+    async with _faction_lock:
+        cached_snapshot = {k: v for k, v in _faction_cache.items() if k.startswith(prefix)}
+
     registry: dict[str, dict[str, Any]] = {}
-    for path in world_dir.glob("*.json"):
+    uncached: dict[str, dict[str, Any]] = {}
+
+    for path in sorted(world_dir.glob("*.json")):
         faction_id = path.stem
         cache_key = f"{world_id}:{faction_id}"
-        async with _faction_lock:
-            if cache_key in _faction_cache:
-                _faction_cache.move_to_end(cache_key)
-                registry[faction_id] = _faction_cache[cache_key]
-                continue
+
+        if cache_key in cached_snapshot:
+            registry[faction_id] = cached_snapshot[cache_key]
+            continue
+
         try:
             data = await asyncio.to_thread(_read_json, path)
             _validate_faction(data)
-            async with _faction_lock:
-                _faction_cache[cache_key] = data
-                while len(_faction_cache) > _MAX_CACHE_SIZE:
-                    _faction_cache.popitem(last=False)
             registry[faction_id] = data
+            uncached[cache_key] = data
         except (json.JSONDecodeError, OSError, ValidationError) as exc:
             logger.warning(
                 "Skipping malformed faction file",
                 extra={"path": str(path), "error": str(exc)},
             )
+
+    # Merge newly loaded entries into cache atomically
+    if uncached:
+        async with _faction_lock:
+            for cache_key, data in uncached.items():
+                _faction_cache[cache_key] = data
+            while len(_faction_cache) > _MAX_CACHE_SIZE:
+                _faction_cache.popitem(last=False)
+            # Touch previously-cached entries used in this registry
+            for cache_key in cached_snapshot:
+                if cache_key in _faction_cache:
+                    _faction_cache.move_to_end(cache_key)
+
+    # Warn about asymmetric relationships (content authoring issues)
+    _warn_asymmetric_relationships(registry)
+
     return registry
+
+
+def _warn_asymmetric_relationships(registry: dict[str, dict[str, Any]]) -> None:
+    """Log warnings for one-directional ally/rival relationships.
+
+    A lists B as ally but B doesn't list A → asymmetric.  Not an error
+    (propagation still works), but usually indicates a content authoring
+    mistake.
+    """
+    for fid, fdef in registry.items():
+        for ally_id in fdef.get("allied_factions", []):
+            if ally_id in registry:
+                ally_def = registry[ally_id]
+                if fid not in ally_def.get("allied_factions", []):
+                    logger.warning(
+                        "Asymmetric ally relationship: %s lists %s as ally but %s does not reciprocate",
+                        fid,
+                        ally_id,
+                        ally_id,
+                        extra={"faction_id": fid, "ally_id": ally_id},
+                    )
+
+        for rival_id in fdef.get("rival_factions", []):
+            if rival_id in registry:
+                rival_def = registry[rival_id]
+                if fid not in rival_def.get("rival_factions", []):
+                    logger.warning(
+                        "Asymmetric rival relationship: %s lists %s as rival but %s does not reciprocate",
+                        fid,
+                        rival_id,
+                        rival_id,
+                        extra={"faction_id": fid, "rival_id": rival_id},
+                    )

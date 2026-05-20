@@ -190,19 +190,26 @@ def _make_item(
 
 
 class TestFactionTier:
+    """Tier boundaries (DEFAULT_THRESHOLDS):
+    hostile: ≤-51, unfriendly: -50..-11, neutral: -10..10,
+    friendly: 11..50, allied: ≥51.
+    """
+
     def test_allied(self):
         assert faction_tier(51) == "allied"
         assert faction_tier(100) == "allied"
 
     def test_friendly(self):
-        assert faction_tier(1) == "friendly"
+        assert faction_tier(11) == "friendly"
         assert faction_tier(50) == "friendly"
 
     def test_neutral(self):
+        assert faction_tier(-10) == "neutral"
         assert faction_tier(0) == "neutral"
+        assert faction_tier(10) == "neutral"
 
     def test_unfriendly(self):
-        assert faction_tier(-1) == "unfriendly"
+        assert faction_tier(-11) == "unfriendly"
         assert faction_tier(-50) == "unfriendly"
 
     def test_hostile(self):
@@ -240,7 +247,7 @@ class TestBuyPrice:
     def test_unfriendly_surcharge(self):
         """Unfriendly standing adds 25% surcharge."""
         # Base 100, 0% markup = 100, then unfriendly +25% = 125
-        price = compute_buy_price(base_value=100, markup_pct=0.0, faction_standing=-25)
+        price = compute_buy_price(base_value=100, markup_pct=0.0, faction_standing=-30)
         assert price == 125
 
     def test_minimum_price(self):
@@ -278,7 +285,7 @@ class TestSellPrice:
 
     def test_unfriendly_penalty(self):
         """Unfriendly: 50% - 10% = 40% sell-back."""
-        price = compute_sell_price(base_value=100, faction_standing=-25)
+        price = compute_sell_price(base_value=100, faction_standing=-30)
         assert price == 40
 
     def test_custom_ratio(self):
@@ -634,7 +641,7 @@ class TestFactionPricing:
     ):
         """Allied faction gives 20% buy discount."""
         char_id = funded_character_id
-        npc = _make_shop_npc()
+        npc = _make_shop_npc(faction_id="market_district")
         mock_load_npc.return_value = npc
         mock_load_item.return_value = _make_item(item_id="iron_sword", value=30)
 
@@ -663,7 +670,7 @@ class TestFactionPricing:
     ):
         """Allied faction gives 60% sell-back (50% + 10%)."""
         char_id = funded_character_id
-        npc = _make_shop_npc()
+        npc = _make_shop_npc(faction_id="market_district")
         mock_load_npc.return_value = npc
         mock_load_item.return_value = _make_item(item_id="iron_sword", value=30)
 
@@ -697,11 +704,11 @@ class TestFactionPricing:
     ):
         """Hostile faction refuses to trade."""
         char_id = funded_character_id
-        npc = _make_shop_npc()
+        npc = _make_shop_npc(faction_id="market_district")
         mock_load_npc.return_value = npc
         mock_load_item.return_value = _make_item(item_id="iron_sword", value=30)
 
-        # Set faction standing to hostile (-50 or below)
+        # Set faction standing to hostile (-51 or below)
         db_client.patch(
             f"/character/{char_id}",
             json={"faction_standing": {"market_district": -60}},
@@ -723,7 +730,7 @@ class TestFactionPricing:
     ):
         """Unfriendly: +25% buy surcharge, 40% sell-back."""
         char_id = funded_character_id
-        npc = _make_shop_npc()
+        npc = _make_shop_npc(faction_id="market_district")
         mock_load_npc.return_value = npc
         mock_load_item.return_value = _make_item(item_id="iron_sword", value=30)
 
@@ -887,7 +894,7 @@ class TestBindingAwareStacking:
 
 
 class TestNpcFactionId:
-    """#8 — _npc_faction_id prefers explicit faction_id over region_id."""
+    """_npc_faction_id uses explicit faction_id, never region_id fallback."""
 
     def test_explicit_faction_id(self):
         from relay.economy.shop import _npc_faction_id
@@ -895,11 +902,12 @@ class TestNpcFactionId:
         npc = _make_shop_npc(faction_region="market_district", faction_id="thieves_guild")
         assert _npc_faction_id(npc) == "thieves_guild"
 
-    def test_falls_back_to_region_id(self):
+    def test_no_faction_id_returns_none(self):
+        """Region ID is NOT used as fallback — returns None for neutral pricing."""
         from relay.economy.shop import _npc_faction_id
 
         npc = _make_shop_npc(faction_region="market_district")
-        assert _npc_faction_id(npc) == "market_district"
+        assert _npc_faction_id(npc) is None
 
 
 class TestPreferUnboundSell:
@@ -1341,20 +1349,33 @@ class TestReputationThresholdsValidation:
 
 
 class TestShopPriceModifiersSchema:
-    """ShopPriceModifiers Pydantic model validation."""
+    """ShopPriceModifiers Pydantic model validation (nested buy/sell)."""
 
-    def test_valid_modifiers(self):
-        from relay.schemas import ShopPriceModifiers
+    def test_valid_buy_modifiers(self):
+        from relay.schemas import ShopPriceModifiers, TierModifiers
 
-        mods = ShopPriceModifiers(allied=0.80, friendly=0.90)
-        assert mods.allied == 0.80
-        assert mods.neutral is None
+        mods = ShopPriceModifiers(buy=TierModifiers(allied=0.80, friendly=0.90))
+        assert mods.buy is not None
+        assert mods.buy.allied == 0.80
+        assert mods.buy.neutral is None
+        assert mods.sell is None
+
+    def test_valid_buy_and_sell(self):
+        from relay.schemas import ShopPriceModifiers, TierModifiers
+
+        mods = ShopPriceModifiers(
+            buy=TierModifiers(allied=0.80),
+            sell=TierModifiers(allied=1.10, friendly=1.05),
+        )
+        assert mods.buy.allied == 0.80
+        assert mods.sell.allied == 1.10
+        assert mods.sell.friendly == 1.05
 
     def test_extra_fields_rejected(self):
         from relay.schemas import ShopPriceModifiers
 
         with pytest.raises(Exception):  # noqa: B017
-            ShopPriceModifiers(allied=0.80, legendary=0.50)
+            ShopPriceModifiers(buy={"allied": 0.80, "legendary": 0.50})
 
 
 class TestGatherTransactionLog:

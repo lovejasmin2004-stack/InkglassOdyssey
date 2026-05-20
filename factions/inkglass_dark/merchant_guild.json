@@ -1,14 +1,23 @@
 {
   "id": "merchant_guild",
+  "world_id": "inkglass_dark",
   "name": "Merchant Guild",
   "allied_factions": ["artisan_collective"],
   "rival_factions": ["thieves_den"],
   "reputation_thresholds": {
     "hostile": -51,
     "unfriendly": -50,
-    "neutral": 0,
-    "friendly": 1,
+    "neutral": -10,
+    "friendly": 11,
     "allied": 51
+  },
+  "shop_price_modifiers": {
+    "buy": {
+      "allied": 0.82,
+      "friendly": 0.92,
+      "neutral": 1.0,
+      "unfriendly": 1.20
+    }
   },
   "description": "A powerful consortium of traders and moneylenders who control the major trade routes through Inkglass. Their influence extends into nearly every market square and dockside warehouse."
 }

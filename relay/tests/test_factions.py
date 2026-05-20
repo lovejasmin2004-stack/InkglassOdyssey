@@ -1,12 +1,14 @@
 """Tests for the faction reputation system.
 
 Covers: tier resolution, standing changes, propagation to allies/rivals,
-clamping, price modifier application, and endpoint integration.
+clamping, price modifier application, propagation cap, phantom prevention,
+reason tracking, tier transitions, overlap validation, and endpoint integration.
 """
 
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from relay.auth.tokens import create_account_token
 from relay.economy.pricing import (
@@ -15,10 +17,13 @@ from relay.economy.pricing import (
     faction_tier,
 )
 from relay.factions.reputation import (
+    _MAX_PROPAGATED_DELTA,
+    DEFAULT_THRESHOLDS,
     apply_standing_change,
     clamp_standing,
     resolve_tier,
 )
+from relay.schemas import Faction
 
 # ---------------------------------------------------------------------------
 # Sample faction registry for propagation tests
@@ -52,6 +57,11 @@ FACTION_REGISTRY = {
 
 
 class TestFactionTier:
+    """Tier boundaries (DEFAULT_THRESHOLDS):
+    hostile: ≤-51, unfriendly: -50..-11, neutral: -10..10,
+    friendly: 11..50, allied: ≥51.
+    """
+
     def test_hostile_low_bound(self):
         assert faction_tier(-100) == "hostile"
 
@@ -62,13 +72,19 @@ class TestFactionTier:
         assert faction_tier(-50) == "unfriendly"
 
     def test_unfriendly_upper_bound(self):
-        assert faction_tier(-1) == "unfriendly"
+        assert faction_tier(-11) == "unfriendly"
 
-    def test_neutral(self):
+    def test_neutral_low_bound(self):
+        assert faction_tier(-10) == "neutral"
+
+    def test_neutral_zero(self):
         assert faction_tier(0) == "neutral"
 
+    def test_neutral_upper_bound(self):
+        assert faction_tier(10) == "neutral"
+
     def test_friendly_low_bound(self):
-        assert faction_tier(1) == "friendly"
+        assert faction_tier(11) == "friendly"
 
     def test_friendly_upper_bound(self):
         assert faction_tier(50) == "friendly"
@@ -85,15 +101,22 @@ class TestFactionTier:
     def test_clamps_below_minus_100(self):
         assert faction_tier(-200) == "hostile"
 
+    def test_default_thresholds_constant_used(self):
+        """Verify faction_tier delegates to resolve_tier with DEFAULT_THRESHOLDS."""
+        for standing in range(-100, 101):
+            assert faction_tier(standing) == resolve_tier(standing)
+
 
 class TestResolveTierCustomThresholds:
     def test_custom_thresholds(self):
-        thresholds = {"hostile": -30, "unfriendly": -29, "neutral": 0, "friendly": 1, "allied": 30}
+        thresholds = {"hostile": -30, "unfriendly": -29, "neutral": -5, "friendly": 6, "allied": 30}
         assert resolve_tier(31, thresholds) == "allied"
         assert resolve_tier(30, thresholds) == "allied"
         assert resolve_tier(29, thresholds) == "friendly"
-        assert resolve_tier(0, thresholds) == "neutral"
-        assert resolve_tier(-1, thresholds) == "unfriendly"
+        assert resolve_tier(6, thresholds) == "friendly"
+        assert resolve_tier(5, thresholds) == "neutral"
+        assert resolve_tier(-5, thresholds) == "neutral"
+        assert resolve_tier(-6, thresholds) == "unfriendly"
         assert resolve_tier(-29, thresholds) == "unfriendly"
         assert resolve_tier(-30, thresholds) == "hostile"
 
@@ -101,6 +124,15 @@ class TestResolveTierCustomThresholds:
         assert resolve_tier(51) == "allied"
         assert resolve_tier(0) == "neutral"
         assert resolve_tier(-51) == "hostile"
+
+    def test_default_thresholds_accessible(self):
+        """DEFAULT_THRESHOLDS is importable and has all required keys."""
+        assert set(DEFAULT_THRESHOLDS.keys()) == {"hostile", "unfriendly", "neutral", "friendly", "allied"}
+        # Ordering invariant: hostile < unfriendly <= neutral <= friendly < allied
+        assert DEFAULT_THRESHOLDS["hostile"] < DEFAULT_THRESHOLDS["unfriendly"]
+        assert DEFAULT_THRESHOLDS["unfriendly"] <= DEFAULT_THRESHOLDS["neutral"]
+        assert DEFAULT_THRESHOLDS["neutral"] <= DEFAULT_THRESHOLDS["friendly"]
+        assert DEFAULT_THRESHOLDS["friendly"] < DEFAULT_THRESHOLDS["allied"]
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +167,7 @@ class TestApplyStandingChange:
         assert standings["merchant_guild"] == 10
         assert changes["merchant_guild"]["old"] == 0
         assert changes["merchant_guild"]["new"] == 10
-        assert changes["merchant_guild"]["tier"] == "friendly"
+        assert changes["merchant_guild"]["tier"] == "neutral"
 
     def test_clamped_to_max(self):
         standings = {"merchant_guild": 95}
@@ -151,32 +183,72 @@ class TestApplyStandingChange:
         standings = {"merchant_guild": 50}
         changes = apply_standing_change(standings, "merchant_guild", -60)
         assert standings["merchant_guild"] == -10
-        assert changes["merchant_guild"]["tier"] == "unfriendly"
+        assert changes["merchant_guild"]["tier"] == "neutral"
+
+    def test_change_report_includes_tier_transition(self):
+        """Change report includes old_tier, tier_changed fields."""
+        standings: dict[str, int] = {}
+        changes = apply_standing_change(standings, "merchant_guild", 15)
+        assert changes["merchant_guild"]["old_tier"] == "neutral"
+        assert changes["merchant_guild"]["tier"] == "friendly"
+        assert changes["merchant_guild"]["tier_changed"] is True
+
+    def test_no_tier_change(self):
+        """tier_changed is False when standing changes within the same tier."""
+        standings = {"merchant_guild": 5}
+        changes = apply_standing_change(standings, "merchant_guild", 5)
+        assert changes["merchant_guild"]["old_tier"] == "neutral"
+        assert changes["merchant_guild"]["tier"] == "neutral"
+        assert changes["merchant_guild"]["tier_changed"] is False
+
+    def test_reason_included_in_report(self):
+        """Reason string is carried through to the change report."""
+        standings: dict[str, int] = {}
+        changes = apply_standing_change(standings, "merchant_guild", 10, reason="quest_reward")
+        assert changes["merchant_guild"]["reason"] == "quest_reward"
+
+    def test_reason_default_empty(self):
+        standings: dict[str, int] = {}
+        changes = apply_standing_change(standings, "merchant_guild", 10)
+        assert changes["merchant_guild"]["reason"] == ""
 
 
 class TestPropagation:
     def test_allied_propagation(self):
         standings: dict[str, int] = {}
         changes = apply_standing_change(standings, "merchant_guild", 10, faction_registry=FACTION_REGISTRY)
-        # Ally gets +50% = +5
+        # Ally gets +50% = trunc(10 * 0.5) = 5
         assert standings["artisan_collective"] == 5
         assert changes["artisan_collective"]["source"] == "allied_propagation"
 
     def test_rival_propagation(self):
         standings: dict[str, int] = {}
         changes = apply_standing_change(standings, "merchant_guild", 10, faction_registry=FACTION_REGISTRY)
-        # Rival gets -25% = floor(10 * -0.25) = floor(-2.5) = -3
-        assert standings["thieves_den"] == -3
+        # Rival gets -25% = trunc(10 * -0.25) = trunc(-2.5) = -2
+        assert standings["thieves_den"] == -2
         assert changes["thieves_den"]["source"] == "rival_propagation"
+
+    def test_rival_propagation_symmetric(self):
+        """Gaining and losing equal amounts produces equal-magnitude rival propagation."""
+        # Gain +10: rival gets trunc(10 * -0.25) = -2
+        standings_gain: dict[str, int] = {}
+        apply_standing_change(standings_gain, "merchant_guild", 10, faction_registry=FACTION_REGISTRY)
+
+        # Lose -10: rival gets trunc(-10 * -0.25) = trunc(2.5) = 2
+        standings_lose: dict[str, int] = {}
+        apply_standing_change(standings_lose, "merchant_guild", -10, faction_registry=FACTION_REGISTRY)
+
+        # Magnitudes should be equal (symmetric)
+        assert abs(standings_gain["thieves_den"]) == abs(standings_lose["thieves_den"])
 
     def test_negative_delta_propagation(self):
         standings: dict[str, int] = {}
         apply_standing_change(standings, "merchant_guild", -20, faction_registry=FACTION_REGISTRY)
         # Direct: 0 + (-20) = -20
         assert standings["merchant_guild"] == -20
-        # Ally: floor(-20 * 0.5) = -10
+        # Ally: trunc(-20 * 0.5) = -10
         assert standings["artisan_collective"] == -10
-        # Rival: floor(-20 * -0.25) = floor(5) = 5
+        # Rival: trunc(-20 * -0.25) = trunc(5) = 5
         assert standings["thieves_den"] == 5
 
     def test_propagation_clamps(self):
@@ -198,13 +270,100 @@ class TestPropagation:
         assert standings["unknown_faction"] == 10
 
     def test_small_delta_rounds_to_zero_no_propagation(self):
+        """With trunc rounding, delta=1 produces zero for both ally and rival."""
         standings: dict[str, int] = {}
         changes = apply_standing_change(standings, "merchant_guild", 1, faction_registry=FACTION_REGISTRY)
-        # Ally: floor(1 * 0.5) = 0 → skipped
-        # Rival: floor(1 * -0.25) = -1
+        # Ally: trunc(1 * 0.5) = trunc(0.5) = 0 → skipped
         assert "artisan_collective" not in changes
         assert standings.get("artisan_collective", 0) == 0
-        assert standings["thieves_den"] == -1
+        # Rival: trunc(1 * -0.25) = trunc(-0.25) = 0 → skipped
+        assert "thieves_den" not in changes
+        assert standings.get("thieves_den", 0) == 0
+
+    def test_propagated_changes_include_tier_transition(self):
+        """Propagated changes also track tier transitions."""
+        standings: dict[str, int] = {}
+        # Delta 30: ally gets trunc(30*0.5)=15, 0→15 = neutral→friendly
+        changes = apply_standing_change(standings, "merchant_guild", 30, faction_registry=FACTION_REGISTRY)
+        ally = changes["artisan_collective"]
+        assert ally["old_tier"] == "neutral"
+        assert ally["tier"] == "friendly"
+        assert ally["tier_changed"] is True
+
+    def test_reason_propagated_to_all_changes(self):
+        """Reason is included in propagated change entries."""
+        standings: dict[str, int] = {}
+        changes = apply_standing_change(
+            standings, "merchant_guild", 10, faction_registry=FACTION_REGISTRY, reason="quest_complete"
+        )
+        for _fid, data in changes.items():
+            assert data["reason"] == "quest_complete"
+
+
+class TestPhantomStandingPrevention:
+    """Propagation skips ally/rival references not in the registry."""
+
+    def test_unknown_ally_not_created(self):
+        registry = {
+            "test_faction": {
+                "id": "test_faction",
+                "name": "Test",
+                "allied_factions": ["ghost_faction"],
+                "rival_factions": [],
+            },
+        }
+        standings: dict[str, int] = {}
+        changes = apply_standing_change(standings, "test_faction", 20, faction_registry=registry)
+        # ghost_faction is in allied_factions but not in registry → skipped
+        assert "ghost_faction" not in standings
+        assert "ghost_faction" not in changes
+
+    def test_unknown_rival_not_created(self):
+        registry = {
+            "test_faction": {
+                "id": "test_faction",
+                "name": "Test",
+                "allied_factions": [],
+                "rival_factions": ["ghost_faction"],
+            },
+        }
+        standings: dict[str, int] = {}
+        changes = apply_standing_change(standings, "test_faction", 20, faction_registry=registry)
+        assert "ghost_faction" not in standings
+        assert "ghost_faction" not in changes
+
+
+class TestPropagationCap:
+    """Propagated deltas are capped at +-_MAX_PROPAGATED_DELTA."""
+
+    def test_large_ally_delta_capped(self):
+        """A +80 direct change caps ally propagation at +20 (not +40)."""
+        standings: dict[str, int] = {}
+        apply_standing_change(standings, "merchant_guild", 80, faction_registry=FACTION_REGISTRY)
+        # Without cap: trunc(80 * 0.5) = 40
+        # With cap: min(40, 20) = 20
+        assert standings["artisan_collective"] == _MAX_PROPAGATED_DELTA
+
+    def test_large_rival_delta_capped(self):
+        """A +100 direct change caps rival propagation at -20 (not -25)."""
+        standings: dict[str, int] = {}
+        apply_standing_change(standings, "merchant_guild", 100, faction_registry=FACTION_REGISTRY)
+        # Without cap: trunc(100 * -0.25) = -25
+        # With cap: max(-25, -20) = -20
+        assert standings["thieves_den"] == -_MAX_PROPAGATED_DELTA
+
+    def test_negative_large_delta_caps_ally(self):
+        """A -80 direct change caps ally propagation at -20 (not -40)."""
+        standings: dict[str, int] = {}
+        apply_standing_change(standings, "merchant_guild", -80, faction_registry=FACTION_REGISTRY)
+        assert standings["artisan_collective"] == -_MAX_PROPAGATED_DELTA
+
+    def test_moderate_delta_not_capped(self):
+        """Deltas that produce propagation within cap are unaffected."""
+        standings: dict[str, int] = {}
+        apply_standing_change(standings, "merchant_guild", 20, faction_registry=FACTION_REGISTRY)
+        # trunc(20 * 0.5) = 10, under cap of 20
+        assert standings["artisan_collective"] == 10
 
 
 # ---------------------------------------------------------------------------
@@ -228,8 +387,8 @@ class TestPricingWithFactionTiers:
         assert price == 100
 
     def test_unfriendly_buy_price(self):
-        price = compute_buy_price(base_value=100, markup_pct=0.0, faction_standing=-25)
-        # unfriendly → +25% → 100 * 1.25 = 125
+        price = compute_buy_price(base_value=100, markup_pct=0.0, faction_standing=-30)
+        # -30 → unfriendly (-50..-11) → +25% → 100 * 1.25 = 125
         assert price == 125
 
     def test_allied_sell_price(self):
@@ -238,8 +397,8 @@ class TestPricingWithFactionTiers:
         assert price == 60
 
     def test_unfriendly_sell_price(self):
-        price = compute_sell_price(base_value=100, faction_standing=-25)
-        # unfriendly → sell_back 0.5 - 0.10 = 0.40 → 40
+        price = compute_sell_price(base_value=100, faction_standing=-30)
+        # -30 → unfriendly (-50..-11) → sell_back 0.5 - 0.10 = 0.40 → 40
         assert price == 40
 
     def test_markup_with_faction_modifier(self):
@@ -297,6 +456,8 @@ class TestStandingEndpoint:
         assert direct["old"] == 0
         assert direct["new"] == 15
         assert direct["tier"] == "friendly"
+        assert direct["old_tier"] == "neutral"
+        assert direct["tier_changed"] is True  # 0 (neutral) → 15 (friendly)
 
     def test_standing_with_propagation(self, db_client, session_header, character_id):
         resp = db_client.patch(
@@ -316,14 +477,17 @@ class TestStandingEndpoint:
         direct = changes_by_id["merchant_guild"]
         assert direct["new"] == 20
         assert direct["source"] == "direct"
+        assert direct["tier"] == "friendly"  # 20 >= 11 → friendly
 
         ally = changes_by_id["artisan_collective"]
         assert ally["new"] == 10  # 50% of 20
         assert ally["source"] == "allied_propagation"
+        assert ally["tier"] == "neutral"  # 10 is neutral (-10..10)
 
         rival = changes_by_id["thieves_den"]
-        assert rival["new"] == -5  # floor(20 * -0.25) = -5
+        assert rival["new"] == -5  # trunc(20 * -0.25) = -5
         assert rival["source"] == "rival_propagation"
+        assert rival["tier"] == "neutral"  # -5 is neutral (-10..10)
 
     def test_standing_persists(self, db_client, session_header, character_id):
         db_client.patch(
@@ -345,7 +509,7 @@ class TestStandingEndpoint:
         standings = resp.json()["standings"]
         mg = next(s for s in standings if s["faction_id"] == "merchant_guild")
         assert mg["standing"] == 30
-        assert mg["tier"] == "friendly"
+        assert mg["tier"] == "friendly"  # 30 >= 11 → friendly
 
     def test_standing_accumulates(self, db_client, session_header, character_id):
         db_client.patch(
@@ -489,8 +653,8 @@ FACTION_REGISTRY_CUSTOM_THRESHOLDS = {
         "reputation_thresholds": {
             "hostile": -30,
             "unfriendly": -29,
-            "neutral": 0,
-            "friendly": 1,
+            "neutral": -10,
+            "friendly": 11,
             "allied": 70,
         },
     },
@@ -502,8 +666,8 @@ FACTION_REGISTRY_CUSTOM_THRESHOLDS = {
         "reputation_thresholds": {
             "hostile": -80,
             "unfriendly": -79,
-            "neutral": 0,
-            "friendly": 1,
+            "neutral": -20,
+            "friendly": 5,
             "allied": 20,
         },
     },
@@ -527,10 +691,10 @@ class TestCustomThresholdsPropagation:
         changes = apply_standing_change(
             standings, "strict_guild", 50, faction_registry=FACTION_REGISTRY_CUSTOM_THRESHOLDS
         )
-        # Ally gets floor(50 * 0.5) = 25
-        # Lenient thresholds: 25 >= 20 → allied
+        # Ally gets trunc(50 * 0.5) = 25 (over cap of 20 → 20)
+        # Lenient thresholds: 20 >= 20 → allied
+        assert changes["lenient_guild"]["new"] == 20
         assert changes["lenient_guild"]["tier"] == "allied"
-        assert changes["lenient_guild"]["new"] == 25
 
     def test_no_thresholds_falls_back_to_default(self):
         """Factions without reputation_thresholds use default tier boundaries."""
@@ -549,6 +713,49 @@ class TestCustomThresholdsPropagation:
 
 
 # ---------------------------------------------------------------------------
+# Ally/rival overlap validation (#3)
+# ---------------------------------------------------------------------------
+
+
+class TestFactionOverlapValidation:
+    def test_overlap_raises_validation_error(self):
+        """A faction cannot have the same ID in both allied and rival lists."""
+        with pytest.raises(ValidationError, match="allied and rival"):
+            Faction(
+                id="bad_faction",
+                name="Bad",
+                allied_factions=["shared_faction"],
+                rival_factions=["shared_faction"],
+                reputation_thresholds={
+                    "hostile": -51,
+                    "unfriendly": -50,
+                    "neutral": -10,
+                    "friendly": 11,
+                    "allied": 51,
+                },
+                description="Should fail",
+            )
+
+    def test_no_overlap_passes(self):
+        """Distinct ally/rival lists pass validation."""
+        faction = Faction(
+            id="good_faction",
+            name="Good",
+            allied_factions=["ally_a"],
+            rival_factions=["rival_b"],
+            reputation_thresholds={
+                "hostile": -51,
+                "unfriendly": -50,
+                "neutral": -10,
+                "friendly": 11,
+                "allied": 51,
+            },
+            description="Should pass",
+        )
+        assert faction.id == "good_faction"
+
+
+# ---------------------------------------------------------------------------
 # updated_at consistency (#4)
 # ---------------------------------------------------------------------------
 
@@ -558,7 +765,7 @@ class TestCustomThresholdPricing:
 
     def test_custom_thresholds_change_buy_price(self):
         """Standing 55 is 'allied' by default (-20%) but 'friendly' (-10%) with strict thresholds."""
-        strict = {"hostile": -30, "unfriendly": -29, "neutral": 0, "friendly": 1, "allied": 70}
+        strict = {"hostile": -30, "unfriendly": -29, "neutral": -10, "friendly": 11, "allied": 70}
         # Default thresholds: 55 >= 51 → allied → 80
         default_price = compute_buy_price(base_value=100, markup_pct=0.0, faction_standing=55)
         assert default_price == 80
@@ -571,7 +778,7 @@ class TestCustomThresholdPricing:
 
     def test_custom_thresholds_change_sell_price(self):
         """Sell-back also respects custom thresholds."""
-        strict = {"hostile": -30, "unfriendly": -29, "neutral": 0, "friendly": 1, "allied": 70}
+        strict = {"hostile": -30, "unfriendly": -29, "neutral": -10, "friendly": 11, "allied": 70}
         # Default: 55 → allied → 0.50 + 0.10 = 60
         default_sell = compute_sell_price(base_value=100, faction_standing=55)
         assert default_sell == 60
@@ -609,8 +816,8 @@ class TestCustomThresholdPricing:
         """is_hostile uses custom thresholds when provided."""
         from relay.economy.pricing import is_hostile
 
-        lenient = {"hostile": -80, "unfriendly": -79, "neutral": 0, "friendly": 1, "allied": 20}
-        # Standing -60: default → hostile (-51 threshold); lenient → unfriendly (-79 threshold)
+        lenient = {"hostile": -80, "unfriendly": -79, "neutral": -20, "friendly": 5, "allied": 20}
+        # Standing -60: default → hostile (< -50); lenient → unfriendly (-79 threshold)
         assert is_hostile(faction_standing=-60) is True
         assert is_hostile(faction_standing=-60, reputation_thresholds=lenient) is False
 
