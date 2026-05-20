@@ -1,0 +1,16 @@
+{
+  "id": "duskweaver_cloak",
+  "world_id": "inkglass_dark",
+  "name": "Duskweaver Cloak",
+  "type": "armour",
+  "rarity": "rare",
+  "weight": 1.5,
+  "value": 800,
+  "description_prose": "A cloak woven from twilight threads that shimmers between visibility and shadow.",
+  "binding": "bind_on_equip",
+  "unique": false,
+  "stats": {
+    "ac_bonus": 1,
+    "stealth_advantage": true
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "viper_venom_sac",
+  "world_id": "inkglass_dark",
+  "name": "Viper Venom Sac",
+  "type": "material",
+  "rarity": "uncommon",
+  "weight": 0.1,
+  "value": 12,
+  "description_prose": "A translucent sac of concentrated venom harvested from a mud viper. Alchemists use it for poisons and antivenoms alike.",
+  "binding": "unbound",
+  "unique": false,
+  "stats": null
+}

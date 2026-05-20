@@ -1,0 +1,15 @@
+{
+  "id": "iron_longsword_recipe",
+  "world_id": "inkglass_dark",
+  "name": "Iron Longsword",
+  "output_item_id": "iron_longsword",
+  "output_quantity": 1,
+  "input_materials": [
+    { "item_id": "iron_ingot", "quantity": 3 },
+    { "item_id": "leather_strip", "quantity": 1 }
+  ],
+  "required_skill": "athletics",
+  "skill_dc": 12,
+  "level_requirement": 2,
+  "required_station_type": "forge"
+}

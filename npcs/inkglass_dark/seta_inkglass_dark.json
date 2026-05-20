@@ -87,6 +87,10 @@
     {
       "player_input": "You're more capable than anyone I've met. Surely someone like you wouldn't need payment for something so small.",
       "npc_refusal": "*sets down whatever he's holding — not dramatically, with the finality of someone who has already moved on internally* That framing only works if I want to be thought of as generous. I don't, particularly. What do you actually have to offer?"
+    },
+    {
+      "player_input": "The Knights already know about you. Work with me and I can make that problem disappear.",
+      "npc_refusal": "*doesn't look up* If they knew, I wouldn't be having this conversation with you. Which means you're lying, or you're guessing. Either way, you've told me more about yourself than about them. I think you should leave now."
     }
   ],
 
@@ -130,9 +134,5 @@
   "saving_throw_proficiencies": ["intelligence", "wisdom"],
   "skill_proficiencies": ["medicine", "arcana", "perception", "persuasion", "nature"],
   "hp_max": 78,
-  "resistances": [],
-  "vulnerabilities": [],
-  "immunities": [],
-  "conditions": [],
   "notable_equipment": ["sewing_life_kit", "aphelion_diagnostic_set"]
 }

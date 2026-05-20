@@ -1,0 +1,10 @@
+{
+  "id": "outer_settlements",
+  "world_id": "inkglass_dark",
+  "name": "Outer Settlements",
+  "description": "Scattered hamlets and farmsteads beyond the city walls. Life here is harder and more isolated. The Thieves' Den operates openly in some settlements, offering protection the Guild won't extend this far.",
+  "connections": ["thornveil_lowlands", "merchant_quarter"],
+  "environmental_effects": [],
+  "gathering_nodes": [],
+  "dominant_faction": "thieves_den"
+}

@@ -1,0 +1,15 @@
+{
+  "id": "leather_armour_recipe",
+  "world_id": "inkglass_dark",
+  "name": "Leather Armour",
+  "output_item_id": "leather_armour",
+  "output_quantity": 1,
+  "input_materials": [
+    { "item_id": "hare_pelt", "quantity": 4 },
+    { "item_id": "leather_strip", "quantity": 2 }
+  ],
+  "required_skill": "survival",
+  "skill_dc": 14,
+  "level_requirement": 3,
+  "required_station_type": null
+}

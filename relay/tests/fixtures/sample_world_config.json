@@ -1,0 +1,68 @@
+{
+  "world_id": "inkglass_dark",
+  "display_name": "Inkglass Dark",
+  "content_rating": "mature",
+  "rp_system_prompt_addendum": "Dark fantasy setting. Gothic architecture, ancient curses, morally grey factions.",
+  "traversal_config": ["ground_mount", "watercraft", "carriage"],
+  "currency_id": "inkglass_dark",
+  "ability_score_map": {
+    "strength": "Might",
+    "dexterity": "Finesse",
+    "constitution": "Endurance",
+    "intelligence": "Acumen",
+    "wisdom": "Insight",
+    "charisma": "Presence"
+  },
+  "equipment_slots": ["head", "chest", "legs", "feet", "hands", "cloak", "main_hand", "off_hand", "ring_1", "ring_2", "amulet"],
+  "max_active_companions": 1,
+  "specialisation_paths": [
+    {
+      "id": "scout",
+      "world": "inkglass_dark",
+      "display_name": "Scout",
+      "path_archetype": "balanced",
+      "hit_die": 8,
+      "saving_throw_proficiencies": ["strength", "dexterity"],
+      "primary_ability_scores": ["dexterity", "wisdom"],
+      "available_skill_proficiencies": ["stealth", "perception", "survival", "athletics", "investigation", "nature"],
+      "description": "Scouts move unseen through the fog-choked wilds, reading danger before it arrives."
+    },
+    {
+      "id": "hexblade",
+      "world": "inkglass_dark",
+      "display_name": "Hexblade",
+      "path_archetype": "martial",
+      "hit_die": 10,
+      "saving_throw_proficiencies": ["constitution", "charisma"],
+      "primary_ability_scores": ["charisma", "constitution"],
+      "available_skill_proficiencies": ["intimidation", "arcana", "deception", "athletics", "history"],
+      "description": "Hexblades bind eldritch pacts to cursed weapons, channelling dark power through steel."
+    }
+  ],
+  "rest_rules": {
+    "short_rest_hp_percent": 0.25,
+    "short_rest_hit_dice_formula": "half_level_rounded_up",
+    "long_rest_hp_percent": 1.0,
+    "long_rest_exhaustion_reduction": 1
+  },
+  "economy_config": {
+    "sell_back_ratio": 0.4,
+    "earning_rates": {
+      "quest_minor": 50,
+      "quest_major": 200,
+      "gathering_per_unit": 5
+    },
+    "price_ranges": {
+      "common": [10, 50],
+      "uncommon": [50, 200],
+      "rare": [200, 1000],
+      "legendary": [1000, 5000]
+    },
+    "crafting_margin_target": 0.3,
+    "transport_fare_ranges": {
+      "local": [5, 20],
+      "regional": [20, 80],
+      "cross_region": [80, 200]
+    }
+  }
+}

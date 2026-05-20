@@ -114,7 +114,7 @@ async def main() -> None:
                     print(msg["text"], end="", flush=True)
                     full_text += msg["text"]
                 elif t == "stream_end":
-                    print(f"\n  --- stream_end ---")
+                    print("\n  --- stream_end ---")
                     break
                 elif t == "error":
                     print(f"\n  [ERROR] {msg['code']}: {msg['message']}")

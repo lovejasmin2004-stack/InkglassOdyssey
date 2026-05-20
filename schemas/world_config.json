@@ -10,8 +10,8 @@
   ],
   "additionalProperties": false,
   "properties": {
-    "world_id":                    { "type": "string" },
-    "display_name":                { "type": "string" },
+    "world_id":                    { "type": "string", "minLength": 1 },
+    "display_name":                { "type": "string", "minLength": 1 },
     "content_rating": {
       "type": "string",
       "enum": ["moderate", "mature"]
@@ -19,16 +19,28 @@
     "rp_system_prompt_addendum":   { "type": "string" },
     "traversal_config": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "uniqueItems": true
     },
-    "currency_id":                 { "type": "string" },
+    "currency_id":                 { "type": "string", "minLength": 1 },
     "ability_score_map": {
       "type": "object",
-      "additionalProperties": { "type": "string" }
+      "required": ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"],
+      "additionalProperties": false,
+      "properties": {
+        "strength":     { "type": "string", "minLength": 1 },
+        "dexterity":    { "type": "string", "minLength": 1 },
+        "constitution": { "type": "string", "minLength": 1 },
+        "intelligence": { "type": "string", "minLength": 1 },
+        "wisdom":       { "type": "string", "minLength": 1 },
+        "charisma":     { "type": "string", "minLength": 1 }
+      }
     },
     "equipment_slots": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
     },
     "resource_model":              { "type": "object" },
     "time_of_day_cycle":           { "type": "object" },
@@ -46,9 +58,9 @@
                      "available_skill_proficiencies", "description"],
         "additionalProperties": false,
         "properties": {
-          "id":            { "type": "string" },
-          "world":         { "type": "string" },
-          "display_name":  { "type": "string" },
+          "id":            { "type": "string", "minLength": 1 },
+          "world":         { "type": "string", "minLength": 1 },
+          "display_name":  { "type": "string", "minLength": 1 },
           "path_archetype": {
             "type": "string",
             "enum": ["scholar", "balanced", "martial", "tank"]
@@ -56,19 +68,28 @@
           "hit_die": { "type": "integer", "enum": [6, 8, 10, 12] },
           "saving_throw_proficiencies": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string",
+              "enum": ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
+            },
             "minItems": 2,
-            "maxItems": 2
+            "maxItems": 2,
+            "uniqueItems": true
           },
           "primary_ability_scores": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string",
+              "enum": ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
+            },
             "minItems": 1,
-            "maxItems": 2
+            "maxItems": 2,
+            "uniqueItems": true
           },
           "available_skill_proficiencies": {
             "type": "array",
-            "items": { "type": "string" }
+            "items": { "type": "string", "minLength": 1 },
+            "uniqueItems": true
           },
           "description": { "type": "string" }
         }
@@ -81,10 +102,10 @@
                    "long_rest_hp_percent", "long_rest_exhaustion_reduction"],
       "additionalProperties": false,
       "properties": {
-        "short_rest_hp_percent":          { "type": "number" },
+        "short_rest_hp_percent":          { "type": "number", "minimum": 0, "maximum": 1 },
         "short_rest_hit_dice_formula":    { "type": "string" },
-        "long_rest_hp_percent":           { "type": "number" },
-        "long_rest_exhaustion_reduction": { "type": "integer" }
+        "long_rest_hp_percent":           { "type": "number", "minimum": 0, "maximum": 1 },
+        "long_rest_exhaustion_reduction": { "type": "integer", "minimum": 0 }
       }
     },
     "economy_config": {
@@ -95,7 +116,7 @@
         "earning_rates":         { "type": "object" },
         "price_ranges":          { "type": "object" },
         "sell_back_ratio":       { "type": "number", "minimum": 0, "maximum": 1 },
-        "crafting_margin_target":{ "type": "number" },
+        "crafting_margin_target":{ "type": "number", "minimum": 0, "maximum": 1 },
         "transport_fare_ranges": { "type": "object" }
       }
     },

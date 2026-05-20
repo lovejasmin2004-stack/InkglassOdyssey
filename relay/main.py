@@ -5,19 +5,29 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI
-from starlette.middleware.base import BaseHTTPMiddleware
-
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from relay.auth.middleware import auth_middleware, get_current_token
 from relay.auth.tokens import AccountTokenPayload, SessionTokenPayload
 from relay.config import settings
 from relay.endpoints.character import router as character_router
+from relay.endpoints.checks import router as checks_router
+from relay.endpoints.combat import router as combat_router
+from relay.endpoints.companion import router as companion_router
+from relay.endpoints.craft import router as craft_router
 from relay.endpoints.dialogue import router as dialogue_router
+from relay.endpoints.dice import router as dice_router
+from relay.endpoints.faction import router as faction_router
+from relay.endpoints.scene import router as scene_router
 from relay.endpoints.session import router as session_router
+from relay.endpoints.shop import router as shop_router
+from relay.endpoints.wallet import router as wallet_router
 from relay.logging_config import setup_logging
+from relay.middleware.rate_limit import rate_limit_middleware
+from relay.schemas import ErrorResponse
 
 setup_logging(level=settings.log_level)
 
@@ -46,29 +56,59 @@ app = FastAPI(
     redoc_url="/redoc" if settings.admin_mode else None,
 )
 
+# Starlette: last-added middleware is outermost (runs first on request).
+# Auth (outermost) sets request.state.token → rate limiter (inner) keys by player_id.
+app.add_middleware(BaseHTTPMiddleware, dispatch=rate_limit_middleware)
 app.add_middleware(BaseHTTPMiddleware, dispatch=auth_middleware)
 
 app.include_router(character_router)
+app.include_router(checks_router)
+app.include_router(combat_router)
+app.include_router(companion_router)
+app.include_router(craft_router)
 app.include_router(dialogue_router)
+app.include_router(dice_router)
+app.include_router(faction_router)
+app.include_router(scene_router)
 app.include_router(session_router)
+app.include_router(shop_router)
+app.include_router(wallet_router)
 
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request, exc: StarletteHTTPException):
     detail = exc.detail
     if isinstance(detail, dict) and "code" in detail:
-        body = detail
+        body = ErrorResponse(**detail).model_dump(exclude_none=True)
     else:
-        body = {"code": str(exc.status_code), "message": str(detail)}
-    return JSONResponse(status_code=exc.status_code, content=body)
+        body = ErrorResponse(
+            code=str(exc.status_code),
+            message=str(detail),
+        ).model_dump(exclude_none=True)
+    return JSONResponse(status_code=exc.status_code, content=body, headers=exc.headers)
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc: RequestValidationError):
-    return JSONResponse(
-        status_code=422,
-        content={"code": "validation_error", "message": str(exc.errors())},
-    )
+    parts: list[str] = []
+    for err in exc.errors():
+        loc = " → ".join(str(part) for part in err["loc"] if part != "body")
+        parts.append(f"{loc}: {err['msg']}" if loc else err["msg"])
+    body = ErrorResponse(
+        code="validation_error",
+        message="; ".join(parts),
+    ).model_dump(exclude_none=True)
+    return JSONResponse(status_code=422, content=body)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc: Exception):
+    logger.exception("Unhandled exception", extra={"path": request.url.path})
+    body = ErrorResponse(
+        code="internal_error",
+        message="An internal error occurred",
+    ).model_dump(exclude_none=True)
+    return JSONResponse(status_code=500, content=body)
 
 
 @app.get("/health")

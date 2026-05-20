@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scenario",
+  "title": "Scenario",
+  "type": "object",
+  "required": ["id", "world_id", "name", "description", "type", "region_id", "level_range", "prerequisites", "trigger_conditions", "stages", "completion_rewards"],
+  "additionalProperties": false,
+  "properties": {
+    "id":          { "type": "string", "minLength": 1 },
+    "world_id":    { "type": "string", "minLength": 1 },
+    "name":        { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "type":        { "type": "string", "minLength": 1 },
+    "companion_npc_id": { "type": "string", "minLength": 1 },
+    "region_id":   { "type": "string", "minLength": 1 },
+    "level_range": {
+      "type": "object",
+      "required": ["min", "max"],
+      "additionalProperties": false,
+      "properties": {
+        "min": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "max": { "type": "integer", "minimum": 1, "maximum": 20 }
+      }
+    },
+    "prerequisites": {
+      "type": "object",
+      "required": ["faction_requirements", "quest_requirements"],
+      "additionalProperties": false,
+      "properties": {
+        "faction_requirements": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "quest_requirements": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "min_relationship_with_npc": { "type": ["integer", "null"] }
+      }
+    },
+    "trigger_conditions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stage_id", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "stage_id":    { "type": "string", "minLength": 1 },
+          "description": { "type": "string" },
+          "check": {
+            "oneOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "required": ["type", "dc"],
+                "additionalProperties": false,
+                "properties": {
+                  "type": { "type": "string", "minLength": 1 },
+                  "dc":   { "type": "integer", "minimum": 1, "maximum": 30 }
+                }
+              }
+            ]
+          },
+          "success_outcome": { "type": ["string", "null"] },
+          "failure_outcome": { "type": ["string", "null"] }
+        }
+      },
+      "minItems": 1
+    },
+    "completion_rewards": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "companion_unlocked": { "type": ["string", "null"] },
+        "faction_change": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["faction_id", "amount"],
+              "additionalProperties": false,
+              "properties": {
+                "faction_id": { "type": "string", "minLength": 1 },
+                "amount":     { "type": "integer", "minimum": -100, "maximum": 100 }
+              }
+            }
+          ]
+        },
+        "items": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

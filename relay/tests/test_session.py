@@ -1,15 +1,19 @@
 """Tests for session and scene lifecycle endpoints."""
+
 from __future__ import annotations
+
+from unittest.mock import patch
 
 import pytest
 
 from relay.auth.tokens import create_account_token
+from relay.tests.conftest import make_stub_npc
 
 
-@pytest.fixture()
-def auth_header():
-    token = create_account_token(player_id="player_001", tier=1)
-    return {"Authorization": f"Bearer {token}"}
+@pytest.fixture(autouse=True)
+def _mock_load_npc():
+    with patch("relay.endpoints.scene.load_npc", return_value=make_stub_npc()):
+        yield
 
 
 @pytest.fixture()
@@ -47,6 +51,7 @@ def character_id(db_client, auth_header):
 # ---------------------------------------------------------------------------
 # Session start
 # ---------------------------------------------------------------------------
+
 
 class TestSessionStart:
     def test_start_session(self, db_client, auth_header, character_id):
@@ -109,6 +114,7 @@ class TestSessionStart:
 # Session state
 # ---------------------------------------------------------------------------
 
+
 class TestSessionState:
     def test_get_session_state(self, db_client, auth_header, character_id):
         start = db_client.post(
@@ -145,6 +151,7 @@ class TestSessionState:
 # Scene lifecycle
 # ---------------------------------------------------------------------------
 
+
 class TestSceneLifecycle:
     def _start_session(self, db_client, auth_header, character_id):
         resp = db_client.post(
@@ -177,8 +184,8 @@ class TestSceneLifecycle:
             json={"session_id": session_id},
             headers=auth_header,
         )
-        assert resp.status_code == 400
-        assert resp.json()["code"] == "missing_field"
+        # Pydantic validation returns 422 for missing required field
+        assert resp.status_code == 422
 
     def test_start_scene_invalid_mode(self, db_client, auth_header, character_id):
         session_id = self._start_session(db_client, auth_header, character_id)
@@ -188,8 +195,8 @@ class TestSceneLifecycle:
             json={"session_id": session_id, "npc_id": "seta", "mode": "combat"},
             headers=auth_header,
         )
-        assert resp.status_code == 400
-        assert resp.json()["code"] == "invalid_field"
+        # Pydantic pattern validation returns 422 for invalid mode value
+        assert resp.status_code == 422
 
     def test_start_scene_ended_session(self, db_client, auth_header, character_id):
         session_id = self._start_session(db_client, auth_header, character_id)
@@ -259,6 +266,7 @@ class TestSceneLifecycle:
 # Session end
 # ---------------------------------------------------------------------------
 
+
 class TestSessionEnd:
     def test_end_session_basic(self, db_client, auth_header, character_id):
         start = db_client.post(
@@ -294,7 +302,7 @@ class TestSessionEnd:
         db_client.post(f"/scene/{scene_id}/end", headers=auth_header)
 
         # Start another scene (leave active -- session end should close it)
-        scene2 = db_client.post(
+        db_client.post(
             "/scene",
             json={"session_id": session_id, "npc_id": "merchant_inkglass_dark", "mode": "quickchat"},
             headers=auth_header,
@@ -315,7 +323,33 @@ class TestSessionEnd:
         )
         session_id = start.json()["session_id"]
 
-        db_client.post(f"/session/{session_id}/end", json={"level_increment": True}, headers=auth_header)
+        # Create a scene and manually add turns to meet the minimum threshold (5)
+        scene_resp = db_client.post(
+            "/scene",
+            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            headers=auth_header,
+        )
+        scene_id = scene_resp.json()["id"]
+
+        # Patch the scene's turn_count directly via DB to simulate gameplay
+        import asyncio
+
+        from sqlalchemy import select as sa_select
+
+        import relay.database as _db
+        from relay.models import Scene as SceneModel
+
+        async def _set_turn_count():
+            async with _db.AsyncSessionLocal() as db:
+                result = await db.execute(sa_select(SceneModel).where(SceneModel.id == scene_id))
+                scene = result.scalar_one()
+                scene.turn_count = 6
+                await db.commit()
+
+        asyncio.run(_set_turn_count())
+
+        resp = db_client.post(f"/session/{session_id}/end", json={"level_increment": True}, headers=auth_header)
+        assert resp.status_code == 200
 
         char = db_client.get(f"/character/{character_id}", headers=auth_header)
         assert char.json()["level"] == 2
@@ -369,6 +403,7 @@ class TestSessionEnd:
 # ---------------------------------------------------------------------------
 # Session state includes scenes
 # ---------------------------------------------------------------------------
+
 
 class TestSessionStateWithScenes:
     def test_state_includes_scenes(self, db_client, auth_header, character_id):

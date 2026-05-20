@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shop_data",
+  "title": "ShopData",
+  "type": "object",
+  "required": ["inventory", "pricing_policy", "restock_schedule"],
+  "additionalProperties": false,
+  "properties": {
+    "inventory": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["item_id", "stock_quantity", "markup_percentage"],
+        "additionalProperties": false,
+        "properties": {
+          "item_id":           { "type": "string" },
+          "stock_quantity":    { "type": "integer", "minimum": 0 },
+          "markup_percentage": { "type": "number" }
+        }
+      }
+    },
+    "pricing_policy": { "type": "string" },
+    "restock_schedule": {
+      "type": "string",
+      "enum": ["daily", "weekly", "never"]
+    },
+    "access_prerequisites": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "faction_standing_threshold": { "type": "integer" },
+        "level_requirement":          { "type": "integer" },
+        "quest_flags":                { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

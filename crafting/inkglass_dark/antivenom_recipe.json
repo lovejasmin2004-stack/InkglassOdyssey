@@ -1,0 +1,16 @@
+{
+  "id": "antivenom_recipe",
+  "world_id": "inkglass_dark",
+  "name": "Antivenom Tincture",
+  "output_item_id": "antivenom_tincture",
+  "output_quantity": 1,
+  "input_materials": [
+    { "item_id": "viper_venom_sac", "quantity": 1 },
+    { "item_id": "moonpetal", "quantity": 1 },
+    { "item_id": "camphor_resin", "quantity": 1 }
+  ],
+  "required_skill": "medicine",
+  "skill_dc": 15,
+  "level_requirement": 3,
+  "required_station_type": null
+}

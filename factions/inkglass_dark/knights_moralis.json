@@ -1,0 +1,14 @@
+{
+  "id": "knights_moralis",
+  "name": "Knights Moralis",
+  "allied_factions": [],
+  "rival_factions": ["witches_circle", "thieves_den"],
+  "reputation_thresholds": {
+    "hostile": -51,
+    "unfriendly": -50,
+    "neutral": 0,
+    "friendly": 1,
+    "allied": 51
+  },
+  "description": "A militant order that enforces arcane law and hunts practitioners of forbidden magic. Their patrols are a constant presence in the city. Respected by some for maintaining order, feared by others for their zealous investigations."
+}

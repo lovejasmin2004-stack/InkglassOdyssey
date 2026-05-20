@@ -1,0 +1,13 @@
+{
+  "id": "moonpetal",
+  "world_id": "inkglass_dark",
+  "name": "Moonpetal",
+  "type": "material",
+  "rarity": "uncommon",
+  "weight": 0.1,
+  "value": 8,
+  "description_prose": "A pale, luminescent flower petal that only blooms under full moons. Alchemists prize it for wound-closing tinctures.",
+  "binding": "unbound",
+  "unique": false,
+  "stats": null
+}

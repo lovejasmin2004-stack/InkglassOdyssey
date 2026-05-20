@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "region",
+  "title": "Region",
+  "type": "object",
+  "required": ["id", "world_id", "name", "description", "connections", "environmental_effects"],
+  "additionalProperties": false,
+  "properties": {
+    "id":          { "type": "string", "minLength": 1 },
+    "world_id":    { "type": "string", "minLength": 1 },
+    "name":        { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "connections": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "environmental_effects": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["darkness", "difficult_terrain", "high_ground", "extreme_weather", "hazard"]
+      },
+      "uniqueItems": true
+    },
+    "gathering_nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["item_id", "skill", "dc"],
+        "additionalProperties": false,
+        "properties": {
+          "item_id":   { "type": "string", "minLength": 1 },
+          "skill":     { "type": "string", "minLength": 1 },
+          "dc":        { "type": "integer", "minimum": 1, "maximum": 30 },
+          "yield_min": { "type": "integer", "minimum": 1, "maximum": 20 },
+          "yield_max": { "type": "integer", "minimum": 1, "maximum": 20 }
+        }
+      }
+    },
+    "fauna": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "dominant_faction": { "type": "string", "minLength": 1 },
+    "traversal_modes": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "level_range": {
+      "type": "object",
+      "required": ["min", "max"],
+      "additionalProperties": false,
+      "properties": {
+        "min": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "max": { "type": "integer", "minimum": 1, "maximum": 20 }
+      }
+    }
+  }
+}

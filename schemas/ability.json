@@ -3,20 +3,32 @@
   "$id": "ability",
   "title": "Ability",
   "type": "object",
-  "required": ["id", "world", "name", "description", "ability_score", "cost", "level_requirement", "tags"],
+  "required": ["id", "world_id", "name", "description", "ability_score", "cost", "level_requirement", "tags"],
   "additionalProperties": false,
   "properties": {
-    "id":              { "type": "string" },
-    "world":           { "type": "string" },
-    "name":            { "type": "string", "minLength": 1 },
-    "description":     { "type": "string" },
-    "ability_score":   { "type": "string" },
-    "modifier_source": { "type": "string" },
-    "damage_dice":     { "type": "string" },
-    "damage_type":     { "type": "string" },
-    "healing_dice":    { "type": "string" },
-    "save_type":       { "type": "string" },
-    "save_dc_source":  { "type": "string" },
+    "id":          { "type": "string", "minLength": 1 },
+    "world_id":    { "type": "string", "minLength": 1 },
+    "name":        { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "ability_score": {
+      "type": "string",
+      "enum": ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
+    },
+    "modifier_source": {
+      "type": "string",
+      "enum": ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
+    },
+    "damage_dice": { "type": "string", "pattern": "^\\d+d\\d+([+-]\\d+)?$" },
+    "damage_type": {
+      "type": "string",
+      "enum": ["bludgeoning", "piercing", "slashing", "fire", "cold", "lightning", "thunder", "acid", "poison", "necrotic", "radiant", "psychic", "force"]
+    },
+    "healing_dice": { "type": "string", "pattern": "^\\d+d\\d+([+-]\\d+)?$" },
+    "save_type": {
+      "type": "string",
+      "enum": ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
+    },
+    "save_dc_source": { "type": "string" },
     "applies_condition": {
       "type": "object",
       "required": ["condition_id", "duration"],
@@ -37,6 +49,6 @@
     },
     "cooldown_turns":    { "type": "integer", "minimum": 1 },
     "level_requirement": { "type": "integer", "minimum": 1, "maximum": 20 },
-    "tags":              { "type": "array", "items": { "type": "string" } }
+    "tags":              { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
   }
 }

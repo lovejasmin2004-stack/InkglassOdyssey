@@ -1,0 +1,13 @@
+{
+  "id": "iron_ingot",
+  "world_id": "inkglass_dark",
+  "name": "Iron Ingot",
+  "type": "material",
+  "rarity": "common",
+  "weight": 1.0,
+  "value": 4,
+  "description_prose": "A dense bar of smelted iron, still bearing faint hammer marks from the forge.",
+  "binding": "unbound",
+  "unique": false,
+  "stats": null
+}

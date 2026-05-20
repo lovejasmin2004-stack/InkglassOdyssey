@@ -178,11 +178,13 @@
       "items": { "type": "string" }
     },
     "hp_max": { "type": "integer", "minimum": 1 },
-    "resistances":   { "type": "array", "items": { "type": "string" } },
-    "vulnerabilities": { "type": "array", "items": { "type": "string" } },
-    "immunities":    { "type": "array", "items": { "type": "string" } },
+    "resistances":   { "type": "array", "items": { "type": "string", "enum": ["bludgeoning", "piercing", "slashing", "fire", "cold", "lightning", "thunder", "acid", "poison", "necrotic", "radiant", "psychic", "force"] }, "uniqueItems": true },
+    "vulnerabilities": { "type": "array", "items": { "type": "string", "enum": ["bludgeoning", "piercing", "slashing", "fire", "cold", "lightning", "thunder", "acid", "poison", "necrotic", "radiant", "psychic", "force"] }, "uniqueItems": true },
+    "immunities":    { "type": "array", "items": { "type": "string", "enum": ["bludgeoning", "piercing", "slashing", "fire", "cold", "lightning", "thunder", "acid", "poison", "necrotic", "radiant", "psychic", "force"] }, "uniqueItems": true },
     "conditions":    { "type": "array", "items": { "type": "object" } },
     "notable_equipment": { "type": "array", "items": { "type": "string" } },
+
+    "faction_id": { "type": "string" },
 
     "shop_data": {
       "type": "object",

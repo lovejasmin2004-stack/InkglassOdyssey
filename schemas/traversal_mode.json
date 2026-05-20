@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "traversal_mode",
+  "title": "TraversalMode",
+  "type": "object",
+  "required": ["id", "display_name", "unity_controller_class", "operating_cost"],
+  "additionalProperties": false,
+  "properties": {
+    "id":                     { "type": "string" },
+    "display_name":           { "type": "string", "minLength": 1 },
+    "unity_controller_class": { "type": "string" },
+    "access_condition": {
+      "type": ["object", "null"],
+      "properties": {
+        "level_requirement":  { "type": "integer", "minimum": 1 },
+        "quest_flag":         { "type": "string" },
+        "item_required":      { "type": "string" }
+      }
+    },
+    "operating_cost": {
+      "type": "object",
+      "required": ["currency_id", "per_region"],
+      "additionalProperties": false,
+      "properties": {
+        "currency_id": { "type": "string" },
+        "per_region":  { "type": "integer", "minimum": 0 }
+      }
+    },
+    "speed_multiplier": { "type": "number", "minimum": 0.1 }
+  }
+}

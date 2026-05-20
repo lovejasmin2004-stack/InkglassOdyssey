@@ -1,0 +1,17 @@
+{
+  "id": "shadow_strike",
+  "world_id": "inkglass_dark",
+  "name": "Shadow Strike",
+  "description": "Channel darkness into a precise melee attack that bypasses armour.",
+  "ability_score": "dexterity",
+  "modifier_source": "dexterity",
+  "damage_dice": "2d6",
+  "damage_type": "necrotic",
+  "cost": {
+    "resource_type": "shadow_essence",
+    "amount": 2
+  },
+  "cooldown_turns": 3,
+  "level_requirement": 4,
+  "tags": ["melee", "necrotic", "stealth"]
+}

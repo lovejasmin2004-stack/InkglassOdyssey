@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scene_state",
+  "title": "SceneState",
+  "type": "object",
+  "required": ["emotional_temperature", "environmental_effects"],
+  "additionalProperties": false,
+  "properties": {
+    "emotional_temperature": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "environmental_effects": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["darkness", "difficult_terrain", "high_ground", "extreme_weather", "hazard"]
+      },
+      "uniqueItems": true
+    },
+    "hidden_elements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "dc", "skill", "hint"],
+        "additionalProperties": false,
+        "properties": {
+          "id":    { "type": "string", "minLength": 1 },
+          "dc":    { "type": "integer", "minimum": 1, "maximum": 30 },
+          "skill": { "type": "string", "enum": ["perception", "insight", "investigation"] },
+          "hint":  { "type": "string" }
+        }
+      }
+    },
+    "notes": { "type": "string" },
+    "director_signal": { "type": "string" }
+  }
+}

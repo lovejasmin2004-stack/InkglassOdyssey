@@ -1,0 +1,13 @@
+{
+  "id": "cleave",
+  "world_id": "inkglass_dark",
+  "name": "Cleave",
+  "description": "A sweeping strike that carves through armour. Deals slashing damage based on raw strength.",
+  "ability_score": "strength",
+  "modifier_source": "strength",
+  "damage_dice": "1d10",
+  "damage_type": "slashing",
+  "cost": { "resource_type": "stamina", "amount": 1 },
+  "level_requirement": 2,
+  "tags": ["martial", "melee", "offensive"]
+}

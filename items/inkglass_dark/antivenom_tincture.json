@@ -1,0 +1,16 @@
+{
+  "id": "antivenom_tincture",
+  "world_id": "inkglass_dark",
+  "name": "Antivenom Tincture",
+  "type": "consumable",
+  "rarity": "uncommon",
+  "weight": 0.3,
+  "value": 30,
+  "description_prose": "A bitter draught brewed from diluted mud viper venom and moonpetal extract. Cures poison and grants resistance to venomous attacks for a short duration.",
+  "binding": "unbound",
+  "unique": false,
+  "stats": {
+    "healing_dice": "1d4",
+    "removes_condition": "poisoned"
+  }
+}

@@ -3,12 +3,12 @@
   "$id": "item",
   "title": "Item",
   "type": "object",
-  "required": ["id", "world", "name", "type", "rarity", "weight", "value", "description_prose", "binding", "unique"],
+  "required": ["id", "world_id", "name", "type", "rarity", "weight", "value", "description_prose", "binding", "unique"],
   "additionalProperties": false,
   "properties": {
-    "id":               { "type": "string" },
-    "world":            { "type": "string" },
-    "name":             { "type": "string", "minLength": 1 },
+    "id":       { "type": "string", "minLength": 1 },
+    "world_id": { "type": "string", "minLength": 1 },
+    "name":     { "type": "string", "minLength": 1 },
     "type": {
       "type": "string",
       "enum": ["weapon", "armour", "shield", "consumable", "material", "tool", "quest"]
@@ -24,7 +24,20 @@
       "type": "string",
       "enum": ["unbound", "bind_on_equip", "bind_on_acquire"]
     },
-    "unique":           { "type": "boolean" },
-    "stats":            { "type": "object" }
+    "unique": { "type": "boolean" },
+    "stats": {
+      "type": ["object", "null"],
+      "properties": {
+        "damage_dice":     { "type": "string", "pattern": "^\\d+d\\d+([+-]\\d+)?$" },
+        "damage_type": {
+          "type": "string",
+          "enum": ["bludgeoning", "piercing", "slashing", "fire", "cold", "lightning", "thunder", "acid", "poison", "necrotic", "radiant", "psychic", "force"]
+        },
+        "modifier_source": { "type": "string", "enum": ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"] },
+        "healing_dice":    { "type": "string", "pattern": "^\\d+d\\d+([+-]\\d+)?$" },
+        "ac_bonus":        { "type": "integer", "minimum": 0 },
+        "armour_category": { "type": ["string", "null"], "enum": ["light", "medium", "heavy", null] }
+      }
+    }
   }
 }

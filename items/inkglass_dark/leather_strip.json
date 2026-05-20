@@ -1,0 +1,13 @@
+{
+  "id": "leather_strip",
+  "world_id": "inkglass_dark",
+  "name": "Leather Strip",
+  "type": "material",
+  "rarity": "common",
+  "weight": 0.2,
+  "value": 2,
+  "description_prose": "A thin strip of cured leather, cut for binding weapon hilts or stitching armour panels.",
+  "binding": "unbound",
+  "unique": false,
+  "stats": null
+}

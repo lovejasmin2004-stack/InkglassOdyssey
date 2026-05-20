@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lore",
+  "title": "Lore",
+  "type": "object",
+  "required": ["id", "world_id", "title", "content", "tags"],
+  "additionalProperties": false,
+  "properties": {
+    "id":        { "type": "string", "minLength": 1 },
+    "world_id":  { "type": "string", "minLength": 1 },
+    "region_id": { "type": "string", "minLength": 1 },
+    "title":     { "type": "string", "minLength": 1 },
+    "content":   { "type": "string", "minLength": 1 },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "related_npcs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "related_factions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    }
+  }
+}

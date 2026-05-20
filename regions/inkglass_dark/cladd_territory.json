@@ -1,0 +1,10 @@
+{
+  "id": "cladd_territory",
+  "world_id": "inkglass_dark",
+  "name": "Cladd Territory",
+  "description": "A walled district of narrow streets and tall stone buildings where the brimmed witches maintain their workshops and residences. The Tower of Tomes dominates the skyline. Knights Moralis patrols are frequent but rarely enter the interior lanes.",
+  "connections": ["merchant_quarter"],
+  "environmental_effects": [],
+  "gathering_nodes": [],
+  "dominant_faction": "witches_circle"
+}

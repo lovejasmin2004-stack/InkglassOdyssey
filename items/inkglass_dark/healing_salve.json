@@ -1,0 +1,15 @@
+{
+  "id": "healing_salve",
+  "world_id": "inkglass_dark",
+  "name": "Healing Salve",
+  "type": "consumable",
+  "rarity": "common",
+  "weight": 0.5,
+  "value": 25,
+  "description_prose": "A jar of thick, mossy-green salve that smells of crushed herbs and camphor. Spread across a wound, it knits flesh with a faint warmth.",
+  "binding": "unbound",
+  "unique": false,
+  "stats": {
+    "healing_dice": "2d4+2"
+  }
+}

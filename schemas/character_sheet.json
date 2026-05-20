@@ -21,17 +21,31 @@
     "specialisation_path_id":  { "type": "string" },
     "ability_scores": {
       "type": "object",
-      "additionalProperties": { "type": "integer" }
+      "required": ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"],
+      "additionalProperties": false,
+      "properties": {
+        "strength":     { "type": "integer", "minimum": 1, "maximum": 30 },
+        "dexterity":    { "type": "integer", "minimum": 1, "maximum": 30 },
+        "constitution": { "type": "integer", "minimum": 1, "maximum": 30 },
+        "intelligence": { "type": "integer", "minimum": 1, "maximum": 30 },
+        "wisdom":       { "type": "integer", "minimum": 1, "maximum": 30 },
+        "charisma":     { "type": "integer", "minimum": 1, "maximum": 30 }
+      }
     },
     "skill_proficiencies": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "type": "string" },
+      "uniqueItems": true
     },
     "saving_throw_proficiencies": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string",
+        "enum": ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
+      },
       "minItems": 2,
-      "maxItems": 2
+      "maxItems": 2,
+      "uniqueItems": true
     },
     "hp_current":        { "type": "integer" },
     "hp_max":            { "type": "integer", "minimum": 1 },
@@ -47,10 +61,21 @@
         "required": ["condition_id", "source"],
         "additionalProperties": false,
         "properties": {
-          "condition_id":    { "type": "string" },
-          "duration_turns":  { "type": "integer", "minimum": 0 },
-          "expiry_turn":     { "type": "integer", "minimum": 0 },
-          "source":          { "type": "string" }
+          "condition_id":       { "type": "string" },
+          "instance_id":        { "type": "string" },
+          "duration_turns":     { "type": "integer", "minimum": 0 },
+          "expiry_turn":        { "type": "integer", "minimum": 0 },
+          "duration_remaining": { "type": ["integer", "null"], "minimum": 0 },
+          "duration_unit": {
+            "type": "string",
+            "enum": ["rounds", "turns", "minutes", "until_long_rest", "permanent"]
+          },
+          "rider_of":           { "type": ["string", "null"] },
+          "source":             { "type": "string" },
+          "source_type": {
+            "type": "string",
+            "enum": ["spell", "feature", "environment", "item", "scenario", "other"]
+          }
         }
       }
     },
@@ -60,6 +85,7 @@
       "additionalProperties": {
         "type": "object",
         "required": ["current", "max"],
+        "additionalProperties": false,
         "properties": {
           "current": { "type": "integer", "minimum": 0 },
           "max":     { "type": "integer", "minimum": 0 }
@@ -89,18 +115,24 @@
     },
     "known_recipes": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "type": "string" },
+      "uniqueItems": true
     },
     "companions": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["npc_id", "behavior_type", "loyalty_strain"],
+        "required": ["npc_id", "behavior_type", "loyalty_strain", "hp_current", "hp_max", "active"],
         "additionalProperties": false,
         "properties": {
-          "npc_id":         { "type": "string" },
-          "behavior_type":  { "type": "string", "enum": ["aggressive", "supportive", "defensive"] },
-          "loyalty_strain": { "type": "integer", "minimum": 0 }
+          "npc_id":           { "type": "string" },
+          "behavior_type":    { "type": "string", "enum": ["aggressive", "supportive", "defensive"] },
+          "loyalty_strain":   { "type": "integer", "minimum": 0 },
+          "hp_current":       { "type": "integer", "minimum": 0 },
+          "hp_max":           { "type": "integer", "minimum": 1 },
+          "conditions":       { "type": "array", "items": { "type": "string" }, "default": [] },
+          "exhaustion_level": { "type": "integer", "minimum": 0, "maximum": 6, "default": 0 },
+          "active":           { "type": "boolean" }
         }
       }
     },

@@ -1,0 +1,13 @@
+{
+  "id": "hare_pelt",
+  "world_id": "inkglass_dark",
+  "name": "Hare Pelt",
+  "type": "material",
+  "rarity": "common",
+  "weight": 0.3,
+  "value": 3,
+  "description_prose": "A soft, mottled pelt from a Thornveil hare. Used in leather-working and light armour crafting.",
+  "binding": "unbound",
+  "unique": false,
+  "stats": null
+}

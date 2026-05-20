@@ -1,0 +1,15 @@
+{
+  "id": "healing_salve_recipe",
+  "world_id": "inkglass_dark",
+  "name": "Healing Salve",
+  "output_item_id": "healing_salve",
+  "output_quantity": 1,
+  "input_materials": [
+    { "item_id": "moonpetal", "quantity": 2 },
+    { "item_id": "camphor_resin", "quantity": 1 }
+  ],
+  "required_skill": "medicine",
+  "skill_dc": 12,
+  "level_requirement": 1,
+  "required_station_type": null
+}
