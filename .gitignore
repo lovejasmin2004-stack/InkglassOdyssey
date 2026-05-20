@@ -17,3 +17,4 @@ Builds/
 *.log
 .DS_Store
 Thumbs.db
+.trash/

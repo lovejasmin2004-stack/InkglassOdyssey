@@ -553,6 +553,70 @@ class TestCustomThresholdsPropagation:
 # ---------------------------------------------------------------------------
 
 
+class TestCustomThresholdPricing:
+    """Pricing engine uses per-faction custom thresholds when provided."""
+
+    def test_custom_thresholds_change_buy_price(self):
+        """Standing 55 is 'allied' by default (-20%) but 'friendly' (-10%) with strict thresholds."""
+        strict = {"hostile": -30, "unfriendly": -29, "neutral": 0, "friendly": 1, "allied": 70}
+        # Default thresholds: 55 >= 51 → allied → 80
+        default_price = compute_buy_price(base_value=100, markup_pct=0.0, faction_standing=55)
+        assert default_price == 80
+
+        # Custom strict thresholds: 55 < 70 → friendly → 90
+        custom_price = compute_buy_price(
+            base_value=100, markup_pct=0.0, faction_standing=55, reputation_thresholds=strict
+        )
+        assert custom_price == 90
+
+    def test_custom_thresholds_change_sell_price(self):
+        """Sell-back also respects custom thresholds."""
+        strict = {"hostile": -30, "unfriendly": -29, "neutral": 0, "friendly": 1, "allied": 70}
+        # Default: 55 → allied → 0.50 + 0.10 = 60
+        default_sell = compute_sell_price(base_value=100, faction_standing=55)
+        assert default_sell == 60
+
+        # Custom strict: 55 → friendly → 0.50 + 0.05 = 55
+        custom_sell = compute_sell_price(
+            base_value=100, faction_standing=55, reputation_thresholds=strict
+        )
+        assert custom_sell == 55
+
+    def test_shop_price_modifiers_override_global(self):
+        """Per-faction shop_price_modifiers override the global _FACTION_BUY_MODIFIER."""
+        # Custom modifiers: allied pays 85% instead of default 80%
+        modifiers = {"allied": 0.85, "friendly": 0.95}
+        price = compute_buy_price(
+            base_value=100,
+            markup_pct=0.0,
+            faction_standing=60,
+            shop_price_modifiers=modifiers,
+        )
+        # 100 * 1.0 * 0.85 = 85
+        assert price == 85
+
+    def test_shop_price_modifiers_fallback_to_global(self):
+        """Tiers not in shop_price_modifiers fall back to global table."""
+        modifiers = {"allied": 0.85}  # Only allied overridden
+        price = compute_buy_price(
+            base_value=100,
+            markup_pct=0.0,
+            faction_standing=25,  # friendly
+            shop_price_modifiers=modifiers,
+        )
+        # friendly not in modifiers → global: 1.0 + (-0.10) = 0.90 → 90
+        assert price == 90
+
+    def test_is_hostile_respects_custom_thresholds(self):
+        """is_hostile uses custom thresholds when provided."""
+        from relay.economy.pricing import is_hostile
+
+        lenient = {"hostile": -80, "unfriendly": -79, "neutral": 0, "friendly": 1, "allied": 20}
+        # Standing -60: default → hostile (-51 threshold); lenient → unfriendly (-79 threshold)
+        assert is_hostile(faction_standing=-60) is True
+        assert is_hostile(faction_standing=-60, reputation_thresholds=lenient) is False
+
+
 class TestStandingUpdatedAt:
     def test_standing_change_sets_updated_at(self, db_client, session_header, auth_header, character_id):
         """PATCH standing should update character.updated_at."""

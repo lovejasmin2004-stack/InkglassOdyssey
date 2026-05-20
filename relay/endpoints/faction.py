@@ -15,8 +15,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from relay.auth.middleware import require_session_token
 from relay.auth.tokens import SessionTokenPayload
 from relay.database import get_db
-from relay.economy.pricing import faction_tier
-from relay.factions.reputation import apply_standing_change
+from relay.factions.reputation import apply_standing_change, resolve_tier
 from relay.models import Character
 from relay.world.content_loader import load_faction_registry
 
@@ -142,13 +141,14 @@ async def get_standings(
         )
 
     standings = char.faction_standing or {}
-    return AllStandingsResponse(
-        standings=[
-            FactionStandingResponse(
-                faction_id=fid,
-                standing=val,
-                tier=faction_tier(val),
-            )
-            for fid, val in standings.items()
-        ],
-    )
+    faction_registry = await load_faction_registry(token.world_id)
+
+    result: list[FactionStandingResponse] = []
+    for fid, val in standings.items():
+        # Use per-faction custom thresholds when available
+        faction_def = (faction_registry or {}).get(fid)
+        thresholds = faction_def.get("reputation_thresholds") if faction_def else None
+        tier = resolve_tier(val, thresholds)
+        result.append(FactionStandingResponse(faction_id=fid, standing=val, tier=tier))
+
+    return AllStandingsResponse(standings=result)

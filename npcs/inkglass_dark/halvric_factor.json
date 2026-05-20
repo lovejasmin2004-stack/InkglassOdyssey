@@ -77,7 +77,7 @@
     },
     {
       "player_input": "I need to sell some materials I gathered.",
-      "npc_response": "Let me see them. *examines items* Condition's decent. I'll take them at standard rate — forty percent of market. That's the policy. Take it or walk to Merchant Quarter and try your luck there.",
+      "npc_response": "Let me see them. *examines items* Condition's decent. I'll take them at standard rate — half of market value. That's the policy. Take it or walk to Merchant Quarter and try your luck there.",
       "context_tag": "transactional"
     }
   ],
@@ -104,6 +104,8 @@
       "pleased":    "nod_note_in_ledger"
     }
   },
+
+  "faction_id": "merchant_guild",
 
   "world_position": {
     "region_id": "thornveil_lowlands"

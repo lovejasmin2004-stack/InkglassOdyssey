@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,6 +64,13 @@ class TransactionEntry(BaseModel):
     item_id: str | None
     item_quantity: int | None
     npc_id: str | None
+    session_id: str | None
+    quest_id: str | None
+    region_id: str | None
+    base_price: int | None
+    markup_pct: float | None
+    faction_modifier: float | None
+    sell_back_ratio: float | None
     note: str | None
     created_at: str
 
@@ -72,6 +79,7 @@ class TransactionEntry(BaseModel):
 
 class TransactionHistoryResponse(BaseModel):
     character_id: str
+    total: int
     transactions: list[TransactionEntry]
 
 
@@ -112,7 +120,7 @@ async def grant_currency(body: GrantRequest, token: Token, db: DB) -> GrantRespo
         note=body.note or "Admin grant",
     )
 
-    await db.flush()
+    await db.commit()
     return GrantResponse(
         character_id=character.id,
         currency=body.currency,
@@ -126,17 +134,28 @@ async def get_transactions(
     character_id: str,
     token: Token,
     db: DB,
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=200, description="Max transactions per page"),
+    offset: int = Query(default=0, ge=0, description="Transactions to skip"),
+    tx_type: str | None = Query(default=None, description="Filter by transaction type"),
 ) -> TransactionHistoryResponse:
     """Get the transaction history for a character."""
     character = await load_character_owned(db, character_id, token.player_id)
 
-    result = await db.execute(
-        select(TransactionLog)
+    query = select(TransactionLog).where(TransactionLog.character_id == character.id)
+
+    if tx_type is not None:
+        query = query.where(TransactionLog.tx_type == tx_type)
+
+    count_result = await db.execute(
+        select(TransactionLog.id).where(TransactionLog.character_id == character.id)
+        if tx_type is None
+        else select(TransactionLog.id)
         .where(TransactionLog.character_id == character.id)
-        .order_by(TransactionLog.created_at.desc())
-        .limit(min(limit, 200))
+        .where(TransactionLog.tx_type == tx_type)
     )
+    total = len(count_result.all())
+
+    result = await db.execute(query.order_by(TransactionLog.created_at.desc()).offset(offset).limit(limit))
     rows = result.scalars().all()
 
     entries = [
@@ -149,6 +168,13 @@ async def get_transactions(
             item_id=r.item_id,
             item_quantity=r.item_quantity,
             npc_id=r.npc_id,
+            session_id=r.session_id,
+            quest_id=r.quest_id,
+            region_id=r.region_id,
+            base_price=r.base_price,
+            markup_pct=r.markup_pct,
+            faction_modifier=r.faction_modifier,
+            sell_back_ratio=r.sell_back_ratio,
             note=r.note,
             created_at=r.created_at.isoformat() if r.created_at else "",
         )
@@ -157,5 +183,6 @@ async def get_transactions(
 
     return TransactionHistoryResponse(
         character_id=character.id,
+        total=total,
         transactions=entries,
     )

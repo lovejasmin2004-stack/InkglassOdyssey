@@ -77,7 +77,7 @@ class TestCreateCharacter:
 
     def test_post_sets_wallet_to_zero(self, db_client: TestClient) -> None:
         r = db_client.post("/character", json=_CREATE_PAYLOAD, headers=_auth())
-        assert r.json()["wallet"] == {"inkglass_dark": 0}
+        assert r.json()["wallet"] == {"gold": 0}
 
     def test_post_tier2_world_requires_tier2(self, db_client: TestClient) -> None:
         payload = {**_CREATE_PAYLOAD, "world_id": "wha_au"}

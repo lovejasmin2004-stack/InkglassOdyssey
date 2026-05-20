@@ -61,6 +61,9 @@ class Character(Base):
     equipped_gear: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     known_recipes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
+    # Position
+    current_region_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
     # Companions and narrative
     companions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     rp_voice_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -187,6 +190,10 @@ class TransactionLog(Base):
     item_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     npc_id: Mapped[str | None] = mapped_column(String, nullable=True)
     session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Structured references
+    quest_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    region_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Pricing metadata (for audit)
     base_price: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -50,7 +50,7 @@ def resolve_tier(
         return "friendly"
     if standing >= thresholds.get("neutral", 0):
         return "neutral"
-    if standing >= thresholds.get("unfriendly", -1):
+    if standing >= thresholds.get("unfriendly", -50):
         return "unfriendly"
     return "hostile"
 

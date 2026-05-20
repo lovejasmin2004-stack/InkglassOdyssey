@@ -24,6 +24,14 @@
       "type": "string",
       "enum": ["daily", "weekly", "never"]
     },
-    "access_prerequisites": { "type": ["object", "null"] }
+    "access_prerequisites": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "faction_standing_threshold": { "type": "integer" },
+        "level_requirement":          { "type": "integer" },
+        "quest_flags":                { "type": "array", "items": { "type": "string" } }
+      }
+    }
   }
 }

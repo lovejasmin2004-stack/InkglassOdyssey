@@ -8,6 +8,12 @@ const ADMIN_BASE = "";                     // same origin (port 8081)
 const RELAY_WS   = "ws://127.0.0.1:8000"; // main relay WebSocket
 
 // ---------------------------------------------------------------------------
+// Admin auth (Fix #1)
+// ---------------------------------------------------------------------------
+
+let _adminToken = sessionStorage.getItem("admin_token") || "";
+
+// ---------------------------------------------------------------------------
 // Tab switching
 // ---------------------------------------------------------------------------
 
@@ -33,19 +39,46 @@ function toast(msg, type = "success") {
 }
 
 // ---------------------------------------------------------------------------
-// API helpers
+// API helpers (with auth retry on 401)
 // ---------------------------------------------------------------------------
 
 async function api(path, opts = {}) {
-  const res = await fetch(ADMIN_BASE + path, {
-    headers: { "Content-Type": "application/json", ...opts.headers },
-    ...opts,
-  });
+  const headers = { "Content-Type": "application/json", ...opts.headers };
+  if (_adminToken) {
+    headers["Authorization"] = "Bearer " + _adminToken;
+  }
+
+  const res = await fetch(ADMIN_BASE + path, { ...opts, headers });
+
+  // On 401, prompt for admin secret and retry once
+  if (res.status === 401 && !opts._retried) {
+    const secret = prompt("Enter Admin Secret:");
+    if (secret) {
+      _adminToken = secret;
+      sessionStorage.setItem("admin_token", secret);
+      return api(path, { ...opts, _retried: true });
+    }
+    throw new Error("Authentication required");
+  }
+
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(Array.isArray(body.detail) ? body.detail.join("\n") : body.detail || res.statusText);
   }
+  return res;
+}
+
+/** Shorthand: fetch + parse JSON body. */
+async function apiJson(path, opts = {}) {
+  const res = await api(path, opts);
   return res.json();
+}
+
+/** Fetch that also returns the response headers. */
+async function apiWithHeaders(path, opts = {}) {
+  const res = await api(path, opts);
+  const data = await res.json();
+  return { data, headers: res.headers };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -55,6 +88,7 @@ async function api(path, opts = {}) {
 const wsContentType = document.getElementById("ws-content-type");
 const wsWorld       = document.getElementById("ws-world");
 const wsFileList    = document.getElementById("ws-file-list");
+const wsSearch      = document.getElementById("ws-search");
 const wsEditorTitle = document.getElementById("ws-editor-title");
 const wsEditorArea  = document.getElementById("ws-editor-content");
 const wsSaveBtn     = document.getElementById("ws-save-btn");
@@ -64,14 +98,44 @@ const wsNewBtn      = document.getElementById("ws-new-btn");
 
 let wsCurrentSchema = null;   // loaded JSON Schema object
 let wsCurrentFileId = null;
+let wsCurrentEtag   = null;   // ETag from last read (optimistic concurrency)
 let wsEditorMode    = "form"; // "form" | "json"
 let wsJsonEditor    = null;   // textarea ref in json mode
+
+// ---------------------------------------------------------------------------
+// Content-type cache (Fix #14 — avoid re-fetching on every dropdown change)
+// ---------------------------------------------------------------------------
+
+let _contentTypesCache = null;
+
+async function getContentTypes() {
+  if (!_contentTypesCache) {
+    _contentTypesCache = await apiJson("/api/content-types");
+  }
+  return _contentTypesCache;
+}
+
+// ---------------------------------------------------------------------------
+// Dirty state tracking (Fix #18)
+// ---------------------------------------------------------------------------
+
+let _isDirty = false;
+
+function markDirty() { _isDirty = true; }
+function markClean() { _isDirty = false; }
+
+window.addEventListener("beforeunload", (e) => {
+  if (_isDirty) {
+    e.preventDefault();
+    e.returnValue = "";
+  }
+});
 
 // Load content types and worlds on init
 (async function initWorkshop() {
   const [types, worlds] = await Promise.all([
-    api("/api/content-types"),
-    api("/api/worlds"),
+    getContentTypes(),
+    apiJson("/api/worlds"),
   ]);
   Object.keys(types).sort().forEach(t => {
     const opt = document.createElement("option");
@@ -99,39 +163,63 @@ async function reloadFileList() {
   const seq = ++_reloadSeq;
   wsFileList.innerHTML = "";
   wsCurrentFileId = null;
+  wsCurrentEtag = null;
   const ct = wsContentType.value;
   const w  = wsWorld.value;
   if (!ct || !w) return;
 
-  // Load schema for this content type
-  const types = await api("/api/content-types");
+  // Load schema for this content type (cached)
+  const types = await getContentTypes();
   if (seq !== _reloadSeq) return;
   const schemaFile = types[ct]?.schema;
   if (schemaFile) {
     const schemaName = schemaFile.replace(".json", "");
-    wsCurrentSchema = await api("/api/schemas/" + schemaName);
+    wsCurrentSchema = await apiJson("/api/schemas/" + schemaName);
   } else {
     wsCurrentSchema = null;
   }
   if (seq !== _reloadSeq) return;
 
-  const files = await api(`/api/content/${ct}/${w}`);
+  // Paginated response (Fix #16)
+  const result = await apiJson(`/api/content/${ct}/${w}?limit=500`);
   if (seq !== _reloadSeq) return;
+  const files = result.items || result;
   files.forEach(f => {
     const div = document.createElement("div");
     div.className = "sidebar-item";
     div.dataset.id = f.id;
-    div.innerHTML = `<span>${f.name || f.id}</span><span style="font-size:0.75rem;color:var(--text2)">${f.id}</span>`;
+    div.dataset.name = (f.name || "").toLowerCase();
+    div.innerHTML = `<span>${esc(f.name || f.id)}</span><span style="font-size:0.75rem;color:var(--text2)">${esc(f.id)}</span>`;
     div.addEventListener("click", () => loadFile(f.id));
     wsFileList.appendChild(div);
+  });
+
+  // Apply current search filter
+  if (wsSearch) applySearchFilter();
+}
+
+// Search / filter on sidebar (Fix #17)
+if (wsSearch) {
+  wsSearch.addEventListener("input", applySearchFilter);
+}
+
+function applySearchFilter() {
+  const q = (wsSearch?.value || "").toLowerCase();
+  wsFileList.querySelectorAll(".sidebar-item").forEach(el => {
+    const text = (el.dataset.name || "") + " " + (el.dataset.id || "");
+    el.style.display = text.includes(q) ? "" : "none";
   });
 }
 
 async function loadFile(fileId) {
+  // Unsaved-changes guard (Fix #18)
+  if (_isDirty && !confirm("You have unsaved changes. Discard?")) return;
+
   const ct = wsContentType.value;
   const w  = wsWorld.value;
-  const data = await api(`/api/content/${ct}/${w}/${fileId}`);
+  const { data, headers } = await apiWithHeaders(`/api/content/${ct}/${w}/${fileId}`);
   wsCurrentFileId = fileId;
+  wsCurrentEtag = (headers.get("ETag") || "").replace(/"/g, "") || null;
   wsEditorTitle.textContent = `${ct} / ${w} / ${fileId}`;
   wsSaveBtn.disabled = false;
   wsValidateBtn.disabled = false;
@@ -143,10 +231,13 @@ async function loadFile(fileId) {
   });
 
   renderEditor(data);
+  markClean();
 }
 
 // New file
 wsNewBtn.addEventListener("click", () => {
+  if (_isDirty && !confirm("You have unsaved changes. Discard?")) return;
+
   const ct = wsContentType.value;
   const w  = wsWorld.value;
   if (!ct || !w) { toast("Select content type and world first", "error"); return; }
@@ -158,6 +249,7 @@ wsNewBtn.addEventListener("click", () => {
   }
 
   wsCurrentFileId = fileId;
+  wsCurrentEtag = null; // new file has no ETag
   wsEditorTitle.textContent = `${ct} / ${w} / ${fileId} (new)`;
   wsSaveBtn.disabled = false;
   wsValidateBtn.disabled = false;
@@ -166,6 +258,7 @@ wsNewBtn.addEventListener("click", () => {
   // Scaffold from schema defaults
   const scaffold = wsCurrentSchema ? scaffoldFromSchema(wsCurrentSchema, { id: fileId, world_id: w }) : { id: fileId };
   renderEditor(scaffold);
+  markClean();
 });
 
 // Editor mode toggle (form / json)
@@ -182,17 +275,28 @@ document.querySelectorAll(".editor-mode-toggle .mode-btn").forEach(btn => {
   });
 });
 
-// Save
+// Save (sends ETag for optimistic concurrency — Fix #13)
 wsSaveBtn.addEventListener("click", async () => {
   try {
     const data = collectFormData();
     const ct = wsContentType.value;
     const w  = wsWorld.value;
-    await api(`/api/content/${ct}/${w}/${wsCurrentFileId}`, {
+    const headers = {};
+    if (wsCurrentEtag) {
+      headers["If-Match"] = `"${wsCurrentEtag}"`;
+    }
+    await apiJson(`/api/content/${ct}/${w}/${wsCurrentFileId}`, {
       method: "PUT",
       body: JSON.stringify(data),
+      headers,
     });
     toast("Saved " + wsCurrentFileId);
+    markClean();
+
+    // Re-read to get updated ETag
+    const { headers: newHeaders } = await apiWithHeaders(`/api/content/${ct}/${w}/${wsCurrentFileId}`);
+    wsCurrentEtag = (newHeaders.get("ETag") || "").replace(/"/g, "") || null;
+
     reloadFileList();
   } catch (e) {
     toast(e.message, "error");
@@ -205,7 +309,7 @@ wsValidateBtn.addEventListener("click", async () => {
     const data = collectFormData();
     const ct = wsContentType.value;
     const w  = wsWorld.value;
-    const result = await api(`/api/content/${ct}/${w}/validate`, {
+    const result = await apiJson(`/api/content/${ct}/${w}/validate`, {
       method: "POST",
       body: JSON.stringify(data),
     });
@@ -221,17 +325,19 @@ wsValidateBtn.addEventListener("click", async () => {
 
 // Delete
 wsDeleteBtn.addEventListener("click", async () => {
-  if (!confirm(`Delete ${wsCurrentFileId}?`)) return;
+  if (!confirm(`Delete ${wsCurrentFileId}? (File will be moved to .trash)`)) return;
   try {
     const ct = wsContentType.value;
     const w  = wsWorld.value;
-    await api(`/api/content/${ct}/${w}/${wsCurrentFileId}`, { method: "DELETE" });
+    await apiJson(`/api/content/${ct}/${w}/${wsCurrentFileId}`, { method: "DELETE" });
     toast("Deleted " + wsCurrentFileId);
     wsCurrentFileId = null;
+    wsCurrentEtag = null;
     wsEditorArea.innerHTML = '<div class="empty-state">File deleted.</div>';
     wsSaveBtn.disabled = true;
     wsValidateBtn.disabled = true;
     wsDeleteBtn.disabled = true;
+    markClean();
     reloadFileList();
   } catch (e) {
     toast(e.message, "error");
@@ -259,6 +365,11 @@ function renderEditor(data) {
   } else {
     renderFormEditor(data);
   }
+  // Attach input listeners for dirty tracking
+  wsEditorArea.querySelectorAll("input, textarea, select").forEach(el => {
+    el.addEventListener("input", markDirty);
+    el.addEventListener("change", markDirty);
+  });
 }
 
 function renderJsonEditor(data) {
@@ -318,7 +429,7 @@ function buildFormFields(container, schema, data, pathPrefix) {
     const isReq = required.has(key);
 
     if (prop.type === "object" && prop.properties) {
-      // Nested object → section
+      // Nested object -> section
       const section = document.createElement("div");
       section.className = "form-section";
       section.innerHTML = `<div class="section-title">${formatLabel(key)}${isReq ? " *" : ""}</div>`;
@@ -327,7 +438,7 @@ function buildFormFields(container, schema, data, pathPrefix) {
     } else if (prop.type === "array") {
       buildArrayField(container, key, prop, value || [], fullPath, isReq);
     } else if (prop.type === "object" && !prop.properties) {
-      // Freeform object → JSON textarea
+      // Freeform object -> JSON textarea
       const group = makeGroup(key, isReq, prop.description);
       const ta = document.createElement("textarea");
       ta.dataset.path = fullPath;
@@ -417,6 +528,7 @@ function buildArrayField(container, key, prop, items, path, isReq) {
     const blank = itemSchema?.type === "object" ? scaffoldFromSchema(itemSchema) :
                   itemSchema?.type === "string" ? "" : null;
     addArrayItem(listEl, itemSchema, blank, `${path}[${idx}]`, idx);
+    markDirty();
   });
 
   group.appendChild(listEl);
@@ -435,7 +547,7 @@ function addArrayItem(listEl, itemSchema, value, path, index) {
   removeBtn.className = "remove-item";
   removeBtn.textContent = "×";
   removeBtn.type = "button";
-  removeBtn.addEventListener("click", () => wrapper.remove());
+  removeBtn.addEventListener("click", () => { wrapper.remove(); markDirty(); });
   wrapper.appendChild(removeBtn);
 
   if (!itemSchema || itemSchema.type === "string") {
@@ -598,13 +710,22 @@ let rpSocket       = null;
 let rpSessionData  = null;
 let rpCurrentText  = "";
 
+// WebSocket reconnect state (Fix #20)
+let _reconnectAttempts = 0;
+const _MAX_RECONNECT = 5;
+const _BASE_DELAY_MS = 1000;
+
+// Character state (Fix #21)
+let rpCharState = { hp_current: 38, hp_max: 38, wallet: {}, conditions: [], inventory: [] };
+
 // Load NPCs when world changes
 rpWorld.addEventListener("change", async () => {
   rpNpc.innerHTML = '<option value="">Loading...</option>';
   const w = rpWorld.value;
   if (!w) { rpNpc.innerHTML = '<option value="">Select world first</option>'; return; }
   try {
-    const npcs = await api(`/api/content/npcs/${w}`);
+    const result = await apiJson(`/api/content/npcs/${w}?limit=500`);
+    const npcs = result.items || result;
     rpNpc.innerHTML = "";
     if (npcs.length === 0) {
       rpNpc.innerHTML = '<option value="">No NPCs found</option>';
@@ -633,11 +754,14 @@ rpConnectBtn.addEventListener("click", async () => {
   addChatMsg("system", "Creating test session...");
 
   try {
-    rpSessionData = await api("/api/test-session", {
+    rpSessionData = await apiJson("/api/test-session", {
       method: "POST",
       body: JSON.stringify({ world_id: world, npc_id: npc, mode }),
     });
-    addChatMsg("system", `Session created. Connecting to relay WebSocket...`);
+    addChatMsg("system", `Session created (expires in 30 min). Connecting...`);
+    rpCharState = { hp_current: 38, hp_max: 38, wallet: {}, conditions: [], inventory: [] };
+    updateCharStatePanel();
+    _reconnectAttempts = 0;
     connectWebSocket();
   } catch (e) {
     addChatMsg("system", "Error: " + e.message);
@@ -649,6 +773,7 @@ function connectWebSocket() {
   rpSocket = new WebSocket(RELAY_WS + "/dialogue");
 
   rpSocket.addEventListener("open", () => {
+    _reconnectAttempts = 0;
     setConnected(true);
     addChatMsg("system", "WebSocket open. Authenticating...");
     rpSocket.send(JSON.stringify({
@@ -665,11 +790,22 @@ function connectWebSocket() {
 
   rpSocket.addEventListener("close", (event) => {
     setConnected(false);
-    addChatMsg("system", `Disconnected (code ${event.code})`);
+    // Auto-reconnect on unexpected close (Fix #20)
+    if (rpSessionData && event.code !== 1000 && _reconnectAttempts < _MAX_RECONNECT) {
+      _reconnectAttempts++;
+      const delay = _BASE_DELAY_MS * Math.pow(2, _reconnectAttempts - 1);
+      addChatMsg("system", `Disconnected. Reconnecting in ${(delay/1000).toFixed(1)}s (attempt ${_reconnectAttempts}/${_MAX_RECONNECT})...`);
+      setTimeout(() => connectWebSocket(), delay);
+    } else if (rpSessionData) {
+      addChatMsg("system", `Disconnected (code ${event.code}). Max reconnect attempts reached.`);
+      rpConnectBtn.disabled = false;
+    } else {
+      addChatMsg("system", `Disconnected (code ${event.code})`);
+    }
   });
 
   rpSocket.addEventListener("error", () => {
-    setConnected(false);
+    // The close handler will fire after error, which handles reconnect.
     addChatMsg("system", "WebSocket error — is the relay running on port 8000?");
   });
 }
@@ -716,6 +852,15 @@ function handleRelayMessage(msg) {
       addChatMsg("system", `Animation: ${JSON.stringify(msg.directive)}`);
       break;
     case "scene_update":
+      // Update character state panel (Fix #21)
+      if (msg.changes) {
+        if (msg.changes.hp_current !== undefined) rpCharState.hp_current = msg.changes.hp_current;
+        if (msg.changes.hp_max !== undefined) rpCharState.hp_max = msg.changes.hp_max;
+        if (msg.changes.wallet !== undefined) rpCharState.wallet = msg.changes.wallet;
+        if (msg.changes.conditions !== undefined) rpCharState.conditions = msg.changes.conditions;
+        if (msg.changes.inventory !== undefined) rpCharState.inventory = msg.changes.inventory;
+        updateCharStatePanel();
+      }
       addChatMsg("system", `Scene update: ${JSON.stringify(msg.changes)}`);
       break;
     case "turn_recovery":
@@ -726,12 +871,15 @@ function handleRelayMessage(msg) {
   }
 }
 
-// Disconnect
+// Disconnect — prevent auto-reconnect on manual disconnect
 rpDisconnBtn.addEventListener("click", () => {
-  if (rpSocket) rpSocket.close();
+  const session = rpSessionData;
+  rpSessionData = null; // clear BEFORE close to prevent reconnect
+  if (rpSocket) rpSocket.close(1000);
   rpSocket = null;
-  rpSessionData = null;
+  _reconnectAttempts = 0;
   setConnected(false);
+  document.getElementById("rp-char-state").style.display = "none";
 });
 
 // Send
@@ -772,6 +920,35 @@ function sendMessage() {
       };
 
   rpSocket.send(JSON.stringify(payload));
+}
+
+// Character state panel (Fix #21)
+function updateCharStatePanel() {
+  const panel = document.getElementById("rp-char-state");
+  if (!panel) return;
+  panel.style.display = "block";
+
+  const hpPct = rpCharState.hp_max > 0
+    ? Math.round((rpCharState.hp_current / rpCharState.hp_max) * 100)
+    : 0;
+  const hpColor = hpPct > 50 ? "var(--success)" : hpPct > 25 ? "var(--warning)" : "var(--danger)";
+
+  document.getElementById("rp-hp-bar").innerHTML =
+    `<div style="display:flex;justify-content:space-between;margin-bottom:2px"><span>HP</span><span>${rpCharState.hp_current}/${rpCharState.hp_max}</span></div>` +
+    `<div class="bar"><div class="bar-fill" style="width:${hpPct}%;background:${hpColor}"></div></div>`;
+
+  const walletEntries = Object.entries(rpCharState.wallet || {});
+  document.getElementById("rp-wallet").innerHTML = walletEntries.length
+    ? `<div style="font-weight:500;margin-bottom:2px">Wallet</div>` + walletEntries.map(([k,v]) => `<div>${esc(k)}: ${v}</div>`).join("")
+    : "";
+
+  const conds = rpCharState.conditions || [];
+  document.getElementById("rp-conditions").innerHTML = conds.length
+    ? `<div style="font-weight:500;margin-bottom:2px">Conditions</div>` + conds.map(c => `<span class="condition-tag">${esc(typeof c === "string" ? c : c.name || JSON.stringify(c))}</span>`).join(" ")
+    : "";
+
+  const inv = rpCharState.inventory || [];
+  document.getElementById("rp-inventory-count").textContent = `${inv.length} item${inv.length !== 1 ? "s" : ""}`;
 }
 
 // Chat UI helpers
@@ -816,3 +993,23 @@ function setConnected(connected) {
   rpConnectBtn.disabled = connected;
   rpDisconnBtn.disabled = !connected;
 }
+
+// ---------------------------------------------------------------------------
+// Keyboard shortcuts (Fix #19)
+// ---------------------------------------------------------------------------
+
+document.addEventListener("keydown", (e) => {
+  const mod = e.ctrlKey || e.metaKey;
+
+  // Ctrl/Cmd+S: Save
+  if (mod && !e.shiftKey && e.key === "s") {
+    e.preventDefault();
+    if (!wsSaveBtn.disabled) wsSaveBtn.click();
+  }
+
+  // Ctrl/Cmd+Shift+V: Validate
+  if (mod && e.shiftKey && (e.key === "V" || e.key === "v")) {
+    e.preventDefault();
+    if (!wsValidateBtn.disabled) wsValidateBtn.click();
+  }
+});

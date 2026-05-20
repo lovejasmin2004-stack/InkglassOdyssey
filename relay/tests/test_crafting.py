@@ -25,6 +25,7 @@ from relay.crafting.crafter import (
     validate_recipe_requirements,
 )
 from relay.crafting.gathering import add_gathered_to_inventory, resolve_gather_yield
+from relay.schemas import GatheringNode
 
 # ---------------------------------------------------------------------------
 # Sample data
@@ -46,13 +47,13 @@ SAMPLE_RECIPE = {
     "level_requirement": 2,
 }
 
-SAMPLE_NODE = {
-    "item_id": "iron_ore",
-    "skill": "athletics",
-    "dc": 12,
-    "yield_min": 1,
-    "yield_max": 3,
-}
+SAMPLE_NODE = GatheringNode(
+    item_id="iron_ore",
+    skill="athletics",
+    dc=12,
+    yield_min=1,
+    yield_max=3,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -327,14 +328,14 @@ class TestGatherYield:
         assert result["quantity"] == 0
 
     def test_uses_node_yield_range(self):
-        node = {"item_id": "moonpetal", "skill": "nature", "dc": 14, "yield_min": 2, "yield_max": 5}
+        node = GatheringNode(item_id="moonpetal", skill="nature", dc=14, yield_min=2, yield_max=5)
         with patch("relay.crafting.gathering.random.randint", return_value=4) as mock_rand:
             result = resolve_gather_yield(node, check_passed=True)
         mock_rand.assert_called_with(2, 5)
         assert result["quantity"] == 4
 
     def test_default_yield_range(self):
-        node = {"item_id": "camphor_resin", "skill": "survival", "dc": 10}
+        node = GatheringNode(item_id="camphor_resin", skill="survival", dc=10)
         with patch("relay.crafting.gathering.random.randint", return_value=2) as mock_rand:
             resolve_gather_yield(node, check_passed=True)
         mock_rand.assert_called_with(1, 3)
@@ -859,8 +860,9 @@ class TestLogItemTransactionHelper:
         char.player_id = "p1"
         char.id = "c1"
         char.world_id = "inkglass_dark"
+        char.wallet = {"gold": 100}
 
-        log_item_transaction(
+        await log_item_transaction(
             db,
             char,
             tx_type="craft",
@@ -877,7 +879,321 @@ class TestLogItemTransactionHelper:
         assert tx.item_id == "iron_sword"
         assert tx.item_quantity == 1
         assert tx.amount == 0
+        assert tx.balance_after == 100
         assert tx.note == "Crafted Iron Sword"
+
+
+class TestGatherFailTransaction:
+    """Failed gathers write a gather_fail transaction log entry (Fix #10)."""
+
+    def test_failed_gather_logs_transaction(self, db_client, session_header, crafter_id):
+        with patch("relay.checks.resolver.random.randint", return_value=1):
+            resp = db_client.post(
+                "/gather",
+                json={
+                    "character_id": crafter_id,
+                    "region_id": "thornveil_lowlands",
+                    "node_item_id": "iron_ore",
+                },
+                headers=session_header,
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["success"] is False
+
+        tx_resp = db_client.get(
+            f"/wallet/{crafter_id}/transactions",
+            headers=_make_auth_header(),
+        )
+        assert tx_resp.status_code == 200
+        txs = tx_resp.json()["transactions"]
+        fail_txs = [t for t in txs if t["tx_type"] == "gather_fail"]
+        assert len(fail_txs) == 1
+        assert fail_txs[0]["item_id"] == "iron_ore"
+        assert fail_txs[0]["region_id"] == "thornveil_lowlands"
+
+
+class TestGatherRetryAfterHeader:
+    """Cooldown 429 responses include a Retry-After header (Fix #15)."""
+
+    def test_retry_after_header_present(self, db_client, session_header, crafter_id):
+        with patch("relay.checks.resolver.random.randint", side_effect=[18, 1]):
+            resp1 = db_client.post(
+                "/gather",
+                json={
+                    "character_id": crafter_id,
+                    "region_id": "thornveil_lowlands",
+                    "node_item_id": "camphor_resin",
+                },
+                headers=session_header,
+            )
+        assert resp1.status_code == 200
+
+        resp2 = db_client.post(
+            "/gather",
+            json={
+                "character_id": crafter_id,
+                "region_id": "thornveil_lowlands",
+                "node_item_id": "camphor_resin",
+            },
+            headers=session_header,
+        )
+        assert resp2.status_code == 429
+        assert "retry-after" in resp2.headers
+        retry_after = int(resp2.headers["retry-after"])
+        assert 1 <= retry_after <= _GATHER_COOLDOWN_SECONDS
+
+
+class TestGatherRegionValidation:
+    """Character must be in the target region to gather (Fix #3)."""
+
+    def test_wrong_region_rejected(self, db_client, session_header, auth_header, crafter_id):
+        db_client.patch(
+            f"/character/{crafter_id}",
+            json={"current_region_id": "some_other_region"},
+            headers=auth_header,
+        )
+
+        resp = db_client.post(
+            "/gather",
+            json={
+                "character_id": crafter_id,
+                "region_id": "thornveil_lowlands",
+                "node_item_id": "iron_ore",
+            },
+            headers=session_header,
+        )
+        assert resp.status_code == 400
+        assert resp.json()["code"] == "wrong_region"
+
+    def test_none_region_allows_gather(self, db_client, session_header, crafter_id):
+        """Character without a region set (fresh character) can gather anywhere."""
+        with patch("relay.checks.resolver.random.randint", side_effect=[18, 2]):
+            resp = db_client.post(
+                "/gather",
+                json={
+                    "character_id": crafter_id,
+                    "region_id": "thornveil_lowlands",
+                    "node_item_id": "iron_ore",
+                },
+                headers=session_header,
+            )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+    def test_matching_region_allows_gather(self, db_client, session_header, auth_header, crafter_id):
+        db_client.patch(
+            f"/character/{crafter_id}",
+            json={"current_region_id": "thornveil_lowlands"},
+            headers=auth_header,
+        )
+
+        with patch("relay.checks.resolver.random.randint", side_effect=[18, 2]):
+            resp = db_client.post(
+                "/gather",
+                json={
+                    "character_id": crafter_id,
+                    "region_id": "thornveil_lowlands",
+                    "node_item_id": "iron_ore",
+                },
+                headers=session_header,
+            )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+
+class TestGatherToolAdvantage:
+    """Tool advantage applies to gathering skill checks (Fix #6)."""
+
+    def test_tool_grants_advantage_on_gather(self, db_client, session_header, auth_header, crafter_id):
+        db_client.patch(
+            f"/character/{crafter_id}",
+            json={
+                "equipped_gear": {
+                    "tool_slot": {
+                        "item_id": "mining_pickaxe",
+                        "item_type": "tool",
+                        "associated_skill": "athletics",
+                    }
+                },
+            },
+            headers=auth_header,
+        )
+
+        # With advantage: two d20 rolls → take highest (15 > 8 → passes DC 12)
+        with patch("relay.checks.resolver.random.randint", side_effect=[8, 15, 2]):
+            resp = db_client.post(
+                "/gather",
+                json={
+                    "character_id": crafter_id,
+                    "region_id": "thornveil_lowlands",
+                    "node_item_id": "iron_ore",
+                },
+                headers=session_header,
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["check_result"]["roll_mode"] == "advantage"
+        assert data["success"] is True
+
+
+class TestGatherFauna:
+    """Fauna gathering yields materials from fauna creatures (Fix #9)."""
+
+    def test_fauna_gather_success(self, db_client, session_header, crafter_id):
+        with (
+            patch("relay.checks.resolver.random.randint", return_value=18),
+            patch("relay.endpoints.craft.random.choice", return_value="hare_pelt"),
+        ):
+            resp = db_client.post(
+                "/gather",
+                json={
+                    "character_id": crafter_id,
+                    "region_id": "thornveil_lowlands",
+                    "fauna_id": "thornveil_hare",
+                },
+                headers=session_header,
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["item_id"] == "hare_pelt"
+        assert data["quantity"] == 1
+
+    def test_fauna_gather_failure(self, db_client, session_header, crafter_id):
+        with (
+            patch("relay.checks.resolver.random.randint", return_value=1),
+            patch("relay.endpoints.craft.random.choice", return_value="hare_pelt"),
+        ):
+            resp = db_client.post(
+                "/gather",
+                json={
+                    "character_id": crafter_id,
+                    "region_id": "thornveil_lowlands",
+                    "fauna_id": "thornveil_hare",
+                },
+                headers=session_header,
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is False
+        assert data["quantity"] == 0
+
+    def test_fauna_not_found(self, db_client, session_header, crafter_id):
+        resp = db_client.post(
+            "/gather",
+            json={
+                "character_id": crafter_id,
+                "region_id": "thornveil_lowlands",
+                "fauna_id": "nonexistent_fauna",
+            },
+            headers=session_header,
+        )
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "fauna_not_found"
+
+    def test_fauna_not_in_region(self, db_client, session_header, crafter_id):
+        """Fauna must be in the target region."""
+        resp = db_client.post(
+            "/gather",
+            json={
+                "character_id": crafter_id,
+                "region_id": "merchant_quarter",
+                "fauna_id": "thornveil_hare",
+            },
+            headers=session_header,
+        )
+        assert resp.status_code == 400
+        assert resp.json()["code"] == "fauna_not_in_region"
+
+    def test_both_node_and_fauna_rejected(self, db_client, session_header, crafter_id):
+        """Cannot specify both node_item_id and fauna_id."""
+        resp = db_client.post(
+            "/gather",
+            json={
+                "character_id": crafter_id,
+                "region_id": "thornveil_lowlands",
+                "node_item_id": "iron_ore",
+                "fauna_id": "thornveil_hare",
+            },
+            headers=session_header,
+        )
+        assert resp.status_code == 422
+
+    def test_neither_node_nor_fauna_rejected(self, db_client, session_header, crafter_id):
+        """Must specify at least one of node_item_id or fauna_id."""
+        resp = db_client.post(
+            "/gather",
+            json={
+                "character_id": crafter_id,
+                "region_id": "thornveil_lowlands",
+            },
+            headers=session_header,
+        )
+        assert resp.status_code == 422
+
+
+class TestGatherTransactionRegionId:
+    """Gather transactions include region_id for DB-based cooldown (Fix #11)."""
+
+    def test_successful_gather_records_region_id(self, db_client, session_header, crafter_id):
+        with patch("relay.checks.resolver.random.randint", side_effect=[18, 2]):
+            resp = db_client.post(
+                "/gather",
+                json={
+                    "character_id": crafter_id,
+                    "region_id": "thornveil_lowlands",
+                    "node_item_id": "iron_ore",
+                },
+                headers=session_header,
+            )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        tx_resp = db_client.get(
+            f"/wallet/{crafter_id}/transactions?tx_type=gather",
+            headers=_make_auth_header(),
+        )
+        assert tx_resp.status_code == 200
+        txs = tx_resp.json()["transactions"]
+        gather_txs = [t for t in txs if t["tx_type"] == "gather"]
+        assert len(gather_txs) >= 1
+        assert gather_txs[0]["region_id"] == "thornveil_lowlands"
+
+
+class TestGatheringNodeValidation:
+    """GatheringNode Pydantic model validates skills and yield ranges."""
+
+    def test_invalid_skill_rejected(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="Unknown gathering skill"):
+            GatheringNode(item_id="ore", skill="fake_skill", dc=10)
+
+    def test_yield_range_ordering(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match=r"yield_min.*yield_max"):
+            GatheringNode(item_id="ore", skill="athletics", dc=10, yield_min=5, yield_max=2)
+
+    def test_valid_node_creation(self):
+        node = GatheringNode(item_id="ore", skill="athletics", dc=10, yield_min=1, yield_max=5)
+        assert node.item_id == "ore"
+        assert node.skill == "athletics"
+        assert node.yield_min == 1
+        assert node.yield_max == 5
+
+    def test_optional_yields_default_none(self):
+        node = GatheringNode(item_id="ore", skill="survival", dc=10)
+        assert node.yield_min is None
+        assert node.yield_max is None
+
+
+# Import cooldown constant for test assertions
+from relay.endpoints.craft import _GATHER_COOLDOWN_SECONDS  # noqa: E402
 
 
 def _make_auth_header() -> dict:

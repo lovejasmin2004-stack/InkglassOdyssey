@@ -184,6 +184,8 @@
     "conditions":    { "type": "array", "items": { "type": "object" } },
     "notable_equipment": { "type": "array", "items": { "type": "string" } },
 
+    "faction_id": { "type": "string" },
+
     "shop_data": {
       "type": "object",
       "required": ["inventory", "pricing_policy", "restock_schedule"],

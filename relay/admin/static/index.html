@@ -14,6 +14,10 @@
       <button class="tab-btn active" data-tab="workshop">Library Workshop</button>
       <button class="tab-btn" data-tab="rp-tester">RP Tester</button>
     </div>
+    <div class="shortcut-hints">
+      <span>Ctrl+S Save</span>
+      <span>Ctrl+Shift+V Validate</span>
+    </div>
   </div>
 
   <!-- Workshop Tab -->
@@ -27,6 +31,7 @@
           <select id="ws-world">
             <option value="">World...</option>
           </select>
+          <input type="text" id="ws-search" placeholder="Filter files...">
           <button class="btn btn-primary btn-sm" id="ws-new-btn" style="width:100%">+ New</button>
         </div>
         <div class="sidebar-list" id="ws-file-list"></div>
@@ -73,6 +78,18 @@
         </div>
         <button class="btn btn-primary" id="rp-connect-btn">Connect</button>
         <button class="btn btn-danger" id="rp-disconnect-btn" disabled>Disconnect</button>
+
+        <!-- Character State Panel (Fix #21) -->
+        <div id="rp-char-state" class="char-state-panel" style="display:none">
+          <h4 style="font-size:0.8rem;font-weight:600;margin-bottom:0.5rem">Character State</h4>
+          <div id="rp-hp-bar"></div>
+          <div id="rp-wallet" class="state-section"></div>
+          <div id="rp-conditions" class="state-section"></div>
+          <div class="state-section" style="color:var(--text2);font-size:0.75rem">
+            Inventory: <span id="rp-inventory-count">0 items</span>
+          </div>
+        </div>
+
         <div style="margin-top:auto;font-size:0.8rem;color:var(--text2)">
           <span class="status-dot disconnected" id="rp-status-dot"></span>
           <span id="rp-status-text">Disconnected</span>

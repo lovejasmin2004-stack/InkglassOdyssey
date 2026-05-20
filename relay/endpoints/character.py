@@ -18,6 +18,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from relay.auth.middleware import get_current_token
 from relay.auth.tokens import AccountTokenPayload, SessionTokenPayload
 from relay.database import get_db
+from relay.economy.shop import get_world_currency
 from relay.models import Character
 
 logger = logging.getLogger(__name__)
@@ -110,6 +111,7 @@ class CharacterPatch(BaseModel):
     inventory: list[dict] | None = None
     equipped_gear: dict | None = None
     known_recipes: list[str] | None = None
+    current_region_id: str | None = None
     companions: list[dict] | None = None
     rp_voice_notes: str | None = None
     relationships: dict[str, int] | None = None
@@ -155,6 +157,7 @@ class CharacterResponse(BaseModel):
     inventory: list[dict]
     equipped_gear: dict
     known_recipes: list[str]
+    current_region_id: str | None
     companions: list[dict]
     rp_voice_notes: str | None
     relationships: dict[str, int]
@@ -332,7 +335,7 @@ async def create_character(body: CharacterCreate, token: Token, db: DB) -> Chara
         exhaustion_level=0,
         death_state_exhaustion_gained=0,
         resources={},
-        wallet={body.world_id: 0},
+        wallet={get_world_currency(body.world_id): 0},
         inventory=[],
         equipped_gear={},
         known_recipes=[],

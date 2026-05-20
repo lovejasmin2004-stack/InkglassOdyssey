@@ -11,6 +11,7 @@ from relay.config import settings
 _ALGORITHM = "HS256"
 _ACCOUNT_TOKEN_TTL_DAYS = 30
 _SESSION_TOKEN_TTL_HOURS = 12
+_TEST_TOKEN_TTL_MINUTES = 30
 
 
 class AccountTokenPayload(BaseModel):
@@ -29,6 +30,7 @@ class SessionTokenPayload(BaseModel):
     role: Literal["player", "dm"]
     mode: Literal["solo", "multiplayer"]
     token_type: Literal["session"] = "session"
+    test: bool = False
     iat: datetime
     exp: datetime
 
@@ -65,6 +67,32 @@ def create_session_token(
         "token_type": "session",
         "iat": now,
         "exp": now + timedelta(hours=_SESSION_TOKEN_TTL_HOURS),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=_ALGORITHM)
+
+
+def create_test_session_token(
+    *,
+    player_id: str,
+    world_id: str,
+    session_id: str,
+    tier: int,
+    role: Literal["player", "dm"] = "player",
+    mode: Literal["solo", "multiplayer"] = "solo",
+) -> str:
+    """Create a short-lived session token marked as test-only."""
+    now = datetime.now(UTC)
+    payload = {
+        "player_id": player_id,
+        "world_id": world_id,
+        "session_id": session_id,
+        "tier": tier,
+        "role": role,
+        "mode": mode,
+        "token_type": "session",
+        "test": True,
+        "iat": now,
+        "exp": now + timedelta(minutes=_TEST_TOKEN_TTL_MINUTES),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=_ALGORITHM)
 

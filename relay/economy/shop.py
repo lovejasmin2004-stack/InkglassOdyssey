@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from relay.economy.pricing import (
-    _DEFAULT_SELL_BACK_RATIO,
+    DEFAULT_SELL_BACK_RATIO,
     compute_buy_price,
     compute_sell_price,
     faction_tier,
@@ -102,7 +104,9 @@ def get_shop_prices(
     npc: NpcPersonality,
     items: dict[str, Item],
     character: Character,
-    sell_back_ratio: float = _DEFAULT_SELL_BACK_RATIO,
+    sell_back_ratio: float = DEFAULT_SELL_BACK_RATIO,
+    reputation_thresholds: dict[str, int] | None = None,
+    shop_price_modifiers: dict[str, float] | None = None,
 ) -> list[PriceQuote]:
     """Compute buy/sell prices for all items in a shop NPC's inventory.
 
@@ -116,6 +120,10 @@ def get_shop_prices(
         The buying character (used for faction standing lookup).
     sell_back_ratio : float
         World-configured sell-back ratio (default 0.50).
+    reputation_thresholds : dict[str, int] | None
+        Per-faction custom tier boundaries from the faction definition.
+    shop_price_modifiers : dict[str, float] | None
+        Per-faction buy-price multipliers (tier → multiplier).
 
     Returns
     -------
@@ -128,7 +136,13 @@ def get_shop_prices(
     faction_id = _npc_faction_id(npc)
     standings = character.faction_standing or {}
     standing = standings.get(faction_id, 0) if faction_id else 0
-    tier = faction_tier(standing)
+
+    if reputation_thresholds:
+        from relay.factions.reputation import resolve_tier
+
+        tier = resolve_tier(standing, reputation_thresholds)
+    else:
+        tier = faction_tier(standing)
 
     quotes: list[PriceQuote] = []
     for entry in npc.shop_data.inventory:
@@ -144,11 +158,14 @@ def get_shop_prices(
             base_value=item.value,
             markup_pct=entry.markup_percentage,
             faction_standing=standing,
+            reputation_thresholds=reputation_thresholds,
+            shop_price_modifiers=shop_price_modifiers,
         )
         sell_price = compute_sell_price(
             base_value=item.value,
             sell_back_ratio=sell_back_ratio,
             faction_standing=standing,
+            reputation_thresholds=reputation_thresholds,
         )
 
         quotes.append(
@@ -167,6 +184,38 @@ def get_shop_prices(
     return quotes
 
 
+async def _load_faction_data(
+    faction_id: str | None, world_id: str
+) -> dict[str, Any] | None:
+    """Load faction definition for pricing context.
+
+    Returns None if the faction cannot be resolved.
+    """
+    if not faction_id:
+        return None
+    from relay.world.content_loader import load_faction
+
+    return await load_faction(faction_id, world_id)
+
+
+def _extract_thresholds(faction_def: dict[str, Any] | None) -> dict[str, int] | None:
+    """Extract reputation_thresholds from a loaded faction definition."""
+    if faction_def is None:
+        return None
+    return faction_def.get("reputation_thresholds")
+
+
+def _extract_price_modifiers(faction_def: dict[str, Any] | None) -> dict[str, float] | None:
+    """Extract shop_price_modifiers from a loaded faction definition."""
+    if faction_def is None:
+        return None
+    mods = faction_def.get("shop_price_modifiers")
+    if mods is None:
+        return None
+    # Convert from nested Pydantic-style to flat {tier: multiplier}
+    return {k: v for k, v in mods.items() if v is not None}
+
+
 async def buy_item(
     db: AsyncSession,
     *,
@@ -174,7 +223,7 @@ async def buy_item(
     npc: NpcPersonality,
     item: Item,
     quantity: int = 1,
-    sell_back_ratio: float = _DEFAULT_SELL_BACK_RATIO,
+    sell_back_ratio: float = DEFAULT_SELL_BACK_RATIO,
 ) -> dict:
     """Execute a buy transaction: debit wallet, add to inventory, log.
 
@@ -196,12 +245,16 @@ async def buy_item(
     if npc.shop_data is None:
         raise ItemNotInShop(f"NPC '{npc.id}' is not a shop")
 
-    # Check faction
+    # Load faction data for custom thresholds and price modifiers
     faction_id = _npc_faction_id(npc)
+    faction_def = await _load_faction_data(faction_id, character.world_id)
+    thresholds = _extract_thresholds(faction_def)
+    price_modifiers = _extract_price_modifiers(faction_def)
+
     standings = character.faction_standing or {}
     standing = standings.get(faction_id, 0) if faction_id else 0
 
-    if is_hostile(faction_standing=standing):
+    if is_hostile(faction_standing=standing, reputation_thresholds=thresholds):
         raise HostileFaction(f"NPC '{npc.id}' refuses to trade (hostile faction)")
 
     # Legendary cannot be purchased
@@ -217,15 +270,31 @@ async def buy_item(
         raise OutOfStock(f"Shop has {shop_entry.stock_quantity} of '{item.id}', requested {quantity}")
 
     # Compute price
-    tier = faction_tier(standing)
+    if thresholds:
+        from relay.factions.reputation import resolve_tier
+
+        tier = resolve_tier(standing, thresholds)
+    else:
+        tier = faction_tier(standing)
+
     unit_price = compute_buy_price(
         base_value=item.value,
         markup_pct=shop_entry.markup_percentage,
         faction_standing=standing,
+        reputation_thresholds=thresholds,
+        shop_price_modifiers=price_modifiers,
     )
     total_price = unit_price * quantity
 
-    # Debit wallet (#7 — world-named currency)
+    # Compute the actual faction multiplier for the audit trail
+    if price_modifiers and tier in price_modifiers:
+        faction_mult = price_modifiers[tier]
+    else:
+        from relay.economy.pricing import _FACTION_BUY_MODIFIER
+
+        faction_mult = 1.0 + _FACTION_BUY_MODIFIER[tier]
+
+    # Debit wallet
     currency = get_world_currency(character.world_id)
     new_balance = await debit(
         db,
@@ -238,7 +307,8 @@ async def buy_item(
         npc_id=npc.id,
         base_price=item.value,
         markup_pct=shop_entry.markup_percentage,
-        faction_modifier=standing,
+        faction_modifier=faction_mult,
+        sell_back_ratio=sell_back_ratio,
         note=f"Bought {quantity}x {item.name} from {npc.name}",
     )
 
@@ -246,10 +316,7 @@ async def buy_item(
     inventory = list(character.inventory or [])
     _add_to_inventory(inventory, item, quantity)
     character.inventory = inventory
-
-    # Decrement shop stock (in-memory only — NPC files are static content,
-    # runtime stock tracking will use a DB table in Phase 2)
-    # For now we trust the stock_quantity in the NPC file.
+    flag_modified(character, "inventory")
 
     logger.info(
         "Buy transaction complete",
@@ -283,7 +350,7 @@ async def sell_item(
     npc: NpcPersonality,
     item: Item,
     quantity: int = 1,
-    sell_back_ratio: float = _DEFAULT_SELL_BACK_RATIO,
+    sell_back_ratio: float = DEFAULT_SELL_BACK_RATIO,
 ) -> dict:
     """Execute a sell transaction: credit wallet, remove from inventory, log.
 
@@ -301,17 +368,20 @@ async def sell_item(
     if npc.shop_data is None:
         raise ShopError(f"NPC '{npc.id}' is not a shop")
 
-    # Check faction
+    # Load faction data for custom thresholds
     faction_id = _npc_faction_id(npc)
+    faction_def = await _load_faction_data(faction_id, character.world_id)
+    thresholds = _extract_thresholds(faction_def)
+
     standings = character.faction_standing or {}
     standing = standings.get(faction_id, 0) if faction_id else 0
 
-    if is_hostile(faction_standing=standing):
+    if is_hostile(faction_standing=standing, reputation_thresholds=thresholds):
         raise HostileFaction(f"NPC '{npc.id}' refuses to trade (hostile faction)")
 
-    # Check character has the item
+    # Check character has the item (prefer unbound stacks for selling)
     inventory = list(character.inventory or [])
-    inv_entry = _find_inventory_entry(inventory, item.id)
+    inv_entry = _find_inventory_entry(inventory, item.id, prefer_unbound=True)
     if inv_entry is None or inv_entry.get("quantity", 0) < quantity:
         raise ItemNotInInventory(f"Character does not have {quantity}x '{item.id}'")
 
@@ -324,15 +394,28 @@ async def sell_item(
         raise BoundItemCannotSell(f"Item '{item.id}' is bound and cannot be sold")
 
     # Compute sell price
-    tier = faction_tier(standing)
+    if thresholds:
+        from relay.factions.reputation import resolve_tier
+
+        tier = resolve_tier(standing, thresholds)
+    else:
+        tier = faction_tier(standing)
+
     unit_price = compute_sell_price(
         base_value=item.value,
         sell_back_ratio=sell_back_ratio,
         faction_standing=standing,
+        reputation_thresholds=thresholds,
     )
     total_price = unit_price * quantity
 
-    # Credit wallet (#7 — world-named currency)
+    # Compute effective sell-back ratio for audit trail
+    from relay.economy.pricing import _FACTION_SELL_MODIFIER
+
+    effective_sell_ratio = sell_back_ratio + _FACTION_SELL_MODIFIER.get(tier, 0.0)
+    effective_sell_ratio = max(0.0, min(1.0, effective_sell_ratio))
+
+    # Credit wallet
     currency = get_world_currency(character.world_id)
     new_balance = await credit(
         db,
@@ -344,14 +427,15 @@ async def sell_item(
         item_quantity=quantity,
         npc_id=npc.id,
         base_price=item.value,
-        sell_back_ratio=sell_back_ratio,
-        faction_modifier=standing,
+        sell_back_ratio=effective_sell_ratio,
+        faction_modifier=effective_sell_ratio,
         note=f"Sold {quantity}x {item.name} to {npc.name}",
     )
 
     # Remove from inventory
     _remove_from_inventory(inventory, item.id, quantity)
     character.inventory = inventory
+    flag_modified(character, "inventory")
 
     logger.info(
         "Sell transaction complete",
@@ -390,11 +474,13 @@ def _npc_faction_id(npc: NpcPersonality) -> str | None:
     schema).  Falls back to ``world_position.region_id`` as a convention.
     Returns None (neutral pricing) if neither is available.
     """
-    # Prefer explicit faction_id if present (#8)
-    explicit = getattr(npc, "faction_id", None)
-    if explicit:
-        return explicit
+    if npc.faction_id:
+        return npc.faction_id
     if npc.world_position:
+        logger.debug(
+            "NPC lacks explicit faction_id — falling back to region_id for pricing",
+            extra={"npc_id": npc.id, "region_id": npc.world_position.region_id},
+        )
         return npc.world_position.region_id
     return None
 
@@ -429,20 +515,44 @@ def _add_to_inventory(inventory: list[dict], item: Item, quantity: int) -> None:
     )
 
 
-def _find_inventory_entry(inventory: list[dict], item_id: str) -> dict | None:
+def _find_inventory_entry(
+    inventory: list[dict], item_id: str, *, prefer_unbound: bool = False
+) -> dict | None:
+    """Find an inventory entry by item_id.
+
+    When prefer_unbound is True (used for selling), returns an unbound stack
+    first so that selling isn't blocked by a bound stack appearing earlier.
+    """
+    fallback: dict | None = None
     for entry in inventory:
         if entry.get("item_id") == item_id:
-            return entry
-    return None
+            if not prefer_unbound:
+                return entry
+            if entry.get("binding_state") != "bound":
+                return entry
+            if fallback is None:
+                fallback = entry
+    return fallback
 
 
 def _remove_from_inventory(inventory: list[dict], item_id: str, quantity: int) -> None:
-    """Remove quantity of an item from inventory. Removes entry if quantity hits 0."""
+    """Remove quantity of an item from inventory. Removes entry if quantity hits 0.
+
+    Prefers unbound stacks so selling doesn't accidentally target bound ones.
+    """
+    target_idx: int | None = None
     for i, entry in enumerate(inventory):
         if entry.get("item_id") == item_id:
-            remaining = entry.get("quantity", 1) - quantity
-            if remaining <= 0:
-                inventory.pop(i)
-            else:
-                entry["quantity"] = remaining
-            return
+            if entry.get("binding_state") != "bound":
+                target_idx = i
+                break
+            if target_idx is None:
+                target_idx = i
+
+    if target_idx is not None:
+        entry = inventory[target_idx]
+        remaining = entry.get("quantity", 1) - quantity
+        if remaining <= 0:
+            inventory.pop(target_idx)
+        else:
+            entry["quantity"] = remaining

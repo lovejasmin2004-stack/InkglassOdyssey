@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
     jwt_secret: str = Field(default="", alias="INKGLASS_JWT_SECRET")
+    admin_secret: str = Field(default="", alias="ADMIN_SECRET")
     database_url: str = Field(default="sqlite+aiosqlite:///./inkglass.db", alias="DATABASE_URL")
     admin_mode: bool = Field(default=False, alias="ADMIN_MODE")
     environment: Literal["development", "staging", "production"] = Field(default="development", alias="ENVIRONMENT")
@@ -27,6 +28,8 @@ class Settings(BaseSettings):
             missing.append("ANTHROPIC_API_KEY")
         if not self.jwt_secret:
             missing.append("INKGLASS_JWT_SECRET")
+        if not self.admin_secret:
+            missing.append("ADMIN_SECRET")
         if missing and self.environment == "production":
             raise ValueError(f"Required environment variables not set: {', '.join(missing)}")
         return self

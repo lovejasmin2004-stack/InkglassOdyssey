@@ -94,6 +94,7 @@ def _make_shop_npc(
     *,
     npc_id: str = "merchant_001",
     faction_region: str = "market_district",
+    faction_id: str | None = None,
     items: list[dict] | None = None,
 ) -> NpcPersonality:
     """Build a minimal shop NPC for testing."""
@@ -139,6 +140,7 @@ def _make_shop_npc(
             default_gaze="forward",
             emotional_state_to_animation={"happy": "nod", "angry": "frown", "sad": "sigh"},
         ),
+        faction_id=faction_id,
         world_position=WorldPosition(region_id=faction_region),
         ability_scores={
             "strength": 10,
@@ -360,8 +362,8 @@ class TestWalletEndpoints:
         assert resp.status_code == 200
         data = resp.json()
         assert data["character_id"] == character_id
-        # Character starts with {"inkglass_dark": 0} from create
-        assert data["balances"]["inkglass_dark"] == 0
+        # Character starts with {"gold": 0} from create (get_world_currency maps inkglass_dark → gold)
+        assert data["balances"]["gold"] == 0
 
     def test_grant_currency(self, db_client, auth_header, character_id):
         resp = db_client.post(
@@ -434,7 +436,7 @@ class TestShopBuySell:
     """Full integration: grant gold → buy item → verify wallet → sell back → verify prices."""
 
     @patch("relay.endpoints.shop.load_npc")
-    @patch("relay.endpoints.shop._load_item")
+    @patch("relay.endpoints.shop.load_item")
     def test_buy_item(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
         char_id = funded_character_id
         npc = _make_shop_npc()
@@ -462,7 +464,7 @@ class TestShopBuySell:
         assert wallet_resp.json()["balances"]["gold"] == 467
 
     @patch("relay.endpoints.shop.load_npc")
-    @patch("relay.endpoints.shop._load_item")
+    @patch("relay.endpoints.shop.load_item")
     def test_sell_item(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
         char_id = funded_character_id
         npc = _make_shop_npc()
@@ -494,7 +496,7 @@ class TestShopBuySell:
         assert receipt["tx_type"] == "sell"
 
     @patch("relay.endpoints.shop.load_npc")
-    @patch("relay.endpoints.shop._load_item")
+    @patch("relay.endpoints.shop.load_item")
     def test_buy_sell_roundtrip_prices(
         self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id
     ):
@@ -538,7 +540,7 @@ class TestShopBuySell:
         assert "sell" in tx_types
 
     @patch("relay.endpoints.shop.load_npc")
-    @patch("relay.endpoints.shop._load_item")
+    @patch("relay.endpoints.shop.load_item")
     def test_buy_insufficient_funds(self, mock_load_item, mock_load_npc, db_client, auth_header, character_id):
         """Character with 0 gold can't buy anything."""
         npc = _make_shop_npc()
@@ -556,7 +558,7 @@ class TestShopBuySell:
         assert resp.json()["code"] == "insufficient_funds"
 
     @patch("relay.endpoints.shop.load_npc")
-    @patch("relay.endpoints.shop._load_item")
+    @patch("relay.endpoints.shop.load_item")
     def test_sell_item_not_in_inventory(
         self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id
     ):
@@ -574,7 +576,7 @@ class TestShopBuySell:
         assert resp.json()["code"] == "item_not_in_inventory"
 
     @patch("relay.endpoints.shop.load_npc")
-    @patch("relay.endpoints.shop._load_item")
+    @patch("relay.endpoints.shop.load_item")
     def test_buy_legendary_blocked(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
         """Legendary items cannot be purchased."""
         npc = _make_shop_npc(
@@ -599,7 +601,7 @@ class TestShopBuySell:
         assert resp.json()["code"] == "legendary_cannot_purchase"
 
     @patch("relay.endpoints.shop.load_npc")
-    @patch("relay.endpoints.shop._load_item")
+    @patch("relay.endpoints.shop.load_item")
     def test_buy_multiple_quantity(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
         """Buying multiple units multiplies the price."""
         npc = _make_shop_npc()
@@ -628,7 +630,7 @@ class TestShopBuySell:
 
 class TestFactionPricing:
     @patch("relay.endpoints.shop.load_npc")
-    @patch("relay.endpoints.shop._load_item")
+    @patch("relay.endpoints.shop.load_item")
     def test_allied_faction_buy_discount(
         self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id
     ):
@@ -657,7 +659,7 @@ class TestFactionPricing:
         assert receipt["faction_tier"] == "allied"
 
     @patch("relay.endpoints.shop.load_npc")
-    @patch("relay.endpoints.shop._load_item")
+    @patch("relay.endpoints.shop.load_item")
     def test_allied_faction_sell_bonus(
         self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id
     ):
@@ -691,7 +693,7 @@ class TestFactionPricing:
         assert receipt["unit_price"] == 18
 
     @patch("relay.endpoints.shop.load_npc")
-    @patch("relay.endpoints.shop._load_item")
+    @patch("relay.endpoints.shop.load_item")
     def test_hostile_faction_buy_refused(
         self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id
     ):
@@ -717,7 +719,7 @@ class TestFactionPricing:
         assert resp.json()["code"] == "hostile_faction"
 
     @patch("relay.endpoints.shop.load_npc")
-    @patch("relay.endpoints.shop._load_item")
+    @patch("relay.endpoints.shop.load_item")
     def test_unfriendly_surcharge_and_penalty(
         self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id
     ):
@@ -763,7 +765,7 @@ class TestFactionPricing:
 
 class TestEdgeCases:
     @patch("relay.endpoints.shop.load_npc")
-    @patch("relay.endpoints.shop._load_item")
+    @patch("relay.endpoints.shop.load_item")
     def test_sell_bound_item_rejected(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
         """Bound items cannot be sold."""
         char_id = funded_character_id
@@ -801,7 +803,7 @@ class TestEdgeCases:
         assert sell_resp.json()["code"] == "bound_item"
 
     @patch("relay.endpoints.shop.load_npc")
-    @patch("relay.endpoints.shop._load_item")
+    @patch("relay.endpoints.shop.load_item")
     def test_item_not_in_shop(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
         """Buying an item not in the shop's inventory returns 404."""
         npc = _make_shop_npc()
@@ -892,9 +894,7 @@ class TestNpcFactionId:
     def test_explicit_faction_id(self):
         from relay.economy.shop import _npc_faction_id
 
-        npc = _make_shop_npc(faction_region="market_district")
-        # Simulate NPC having an explicit faction_id
-        object.__setattr__(npc, "faction_id", "thieves_guild")
+        npc = _make_shop_npc(faction_region="market_district", faction_id="thieves_guild")
         assert _npc_faction_id(npc) == "thieves_guild"
 
     def test_falls_back_to_region_id(self):
@@ -902,6 +902,46 @@ class TestNpcFactionId:
 
         npc = _make_shop_npc(faction_region="market_district")
         assert _npc_faction_id(npc) == "market_district"
+
+
+class TestPreferUnboundSell:
+    """Sell logic should prefer unbound stacks over bound ones."""
+
+    def test_find_inventory_entry_prefers_unbound(self):
+        from relay.economy.shop import _find_inventory_entry
+
+        inventory = [
+            {"item_id": "ring", "quantity": 1, "binding_state": "bound"},
+            {"item_id": "ring", "quantity": 3, "binding_state": "unbound"},
+        ]
+        entry = _find_inventory_entry(inventory, "ring", prefer_unbound=True)
+        assert entry is not None
+        assert entry["binding_state"] == "unbound"
+        assert entry["quantity"] == 3
+
+    def test_find_inventory_entry_falls_back_to_bound(self):
+        from relay.economy.shop import _find_inventory_entry
+
+        inventory = [
+            {"item_id": "ring", "quantity": 1, "binding_state": "bound"},
+        ]
+        entry = _find_inventory_entry(inventory, "ring", prefer_unbound=True)
+        assert entry is not None
+        assert entry["binding_state"] == "bound"
+
+    def test_remove_from_inventory_prefers_unbound(self):
+        from relay.economy.shop import _remove_from_inventory
+
+        inventory = [
+            {"item_id": "ring", "quantity": 1, "binding_state": "bound"},
+            {"item_id": "ring", "quantity": 3, "binding_state": "unbound"},
+        ]
+        _remove_from_inventory(inventory, "ring", 2)
+        assert len(inventory) == 2
+        assert inventory[0]["quantity"] == 1
+        assert inventory[0]["binding_state"] == "bound"
+        assert inventory[1]["quantity"] == 1
+        assert inventory[1]["binding_state"] == "unbound"
 
 
 class TestProduceOutputMutation:
@@ -960,6 +1000,367 @@ class TestQuestReward:
         tx = db.add.call_args[0][0]
         assert tx.tx_type == "quest_reward"
         assert "find_the_sword" in tx.note
+
+
+class TestShopBrowse:
+    """#13 — GET /shop/{npc_id} browse endpoint tests."""
+
+    @patch("relay.endpoints.shop.load_npc")
+    @patch("relay.endpoints.shop.load_item")
+    def test_browse_shop(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
+        """Browse returns paginated item list with prices."""
+        npc = _make_shop_npc()
+        mock_load_npc.return_value = npc
+
+        sword = _make_item(item_id="iron_sword", value=30)
+        potion = _make_item(item_id="health_potion", name="Health Potion", item_type="consumable", value=20)
+        amulet = _make_item(item_id="rare_amulet", name="Rare Amulet", item_type="armour", rarity="rare", value=2000)
+
+        async def _fake_load(item_id, world_id):
+            return {"iron_sword": sword, "health_potion": potion, "rare_amulet": amulet}.get(item_id)
+
+        mock_load_item.side_effect = _fake_load
+
+        resp = db_client.get(
+            f"/shop/merchant_001?character_id={funded_character_id}",
+            headers=auth_header,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["npc_id"] == "merchant_001"
+        assert data["npc_name"] == "Gareth the Merchant"
+        assert data["total"] == 3
+        assert len(data["items"]) == 3
+
+        sword_item = next(i for i in data["items"] if i["item_id"] == "iron_sword")
+        assert sword_item["buy_price"] == 33
+        assert sword_item["sell_price"] == 15
+        assert sword_item["stock"] == 5
+
+    @patch("relay.endpoints.shop.load_npc")
+    @patch("relay.endpoints.shop.load_item")
+    def test_browse_pagination(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
+        """Pagination with limit and offset works."""
+        npc = _make_shop_npc()
+        mock_load_npc.return_value = npc
+
+        sword = _make_item(item_id="iron_sword", value=30)
+        potion = _make_item(item_id="health_potion", name="Health Potion", item_type="consumable", value=20)
+        amulet = _make_item(item_id="rare_amulet", name="Rare Amulet", item_type="armour", rarity="rare", value=2000)
+
+        async def _fake_load(item_id, world_id):
+            return {"iron_sword": sword, "health_potion": potion, "rare_amulet": amulet}.get(item_id)
+
+        mock_load_item.side_effect = _fake_load
+
+        resp = db_client.get(
+            f"/shop/merchant_001?character_id={funded_character_id}&limit=1&offset=1",
+            headers=auth_header,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 3
+        assert len(data["items"]) == 1
+
+
+class TestOutOfStock:
+    """#14 — OutOfStock error when shop has zero stock."""
+
+    @patch("relay.endpoints.shop.load_npc")
+    @patch("relay.endpoints.shop.load_item")
+    def test_buy_zero_stock_item(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
+        """Buying an item with stock_quantity=0 returns 409."""
+        npc = _make_shop_npc(
+            items=[
+                {"item_id": "rare_gem", "stock_quantity": 0, "markup_percentage": 0.0},
+            ]
+        )
+        mock_load_npc.return_value = npc
+        mock_load_item.return_value = _make_item(
+            item_id="rare_gem", name="Rare Gem", rarity="rare", value=500
+        )
+
+        resp = db_client.post(
+            "/shop/merchant_001/buy",
+            json={"character_id": funded_character_id, "item_id": "rare_gem", "quantity": 1},
+            headers=auth_header,
+        )
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "out_of_stock"
+
+    @patch("relay.endpoints.shop.load_npc")
+    @patch("relay.endpoints.shop.load_item")
+    def test_buy_exceeds_stock(self, mock_load_item, mock_load_npc, db_client, auth_header, funded_character_id):
+        """Buying more than available stock returns 409."""
+        npc = _make_shop_npc(
+            items=[
+                {"item_id": "health_potion", "stock_quantity": 2, "markup_percentage": 0.0},
+            ]
+        )
+        mock_load_npc.return_value = npc
+        mock_load_item.return_value = _make_item(
+            item_id="health_potion", name="Health Potion", item_type="consumable", value=20
+        )
+
+        resp = db_client.post(
+            "/shop/merchant_001/buy",
+            json={"character_id": funded_character_id, "item_id": "health_potion", "quantity": 5},
+            headers=auth_header,
+        )
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "out_of_stock"
+
+
+class TestWalletKeyInitialisation:
+    """Character wallet key uses get_world_currency, not raw world_id."""
+
+    def test_inkglass_dark_wallet_key_is_gold(self, db_client, auth_header, character_id):
+        resp = db_client.get(f"/wallet/{character_id}", headers=auth_header)
+        assert resp.status_code == 200
+        balances = resp.json()["balances"]
+        assert "gold" in balances
+        assert "inkglass_dark" not in balances
+
+
+class TestTransactionPagination:
+    """Offset, limit, and total in transaction history."""
+
+    def test_pagination_offset_limit(self, db_client, auth_header, character_id):
+        for i in range(5):
+            db_client.post(
+                "/wallet/grant",
+                json={"character_id": character_id, "currency": "gold", "amount": (i + 1) * 10},
+                headers=auth_header,
+            )
+
+        resp = db_client.get(
+            f"/wallet/{character_id}/transactions?limit=2&offset=1",
+            headers=auth_header,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 5
+        assert len(data["transactions"]) == 2
+
+    def test_total_field_present(self, db_client, auth_header, character_id):
+        resp = db_client.get(
+            f"/wallet/{character_id}/transactions",
+            headers=auth_header,
+        )
+        assert resp.status_code == 200
+        assert "total" in resp.json()
+        assert resp.json()["total"] == 0
+
+
+class TestTransactionTypeFilter:
+    """tx_type query parameter filters transactions."""
+
+    def test_filter_by_tx_type(self, db_client, auth_header, funded_character_id):
+        char_id = funded_character_id
+        # funded_character_id created one grant transaction
+
+        resp = db_client.get(
+            f"/wallet/{char_id}/transactions?tx_type=grant",
+            headers=auth_header,
+        )
+        assert resp.status_code == 200
+        txns = resp.json()["transactions"]
+        assert len(txns) == 1
+        assert all(t["tx_type"] == "grant" for t in txns)
+
+    def test_filter_returns_empty_for_nonexistent_type(self, db_client, auth_header, funded_character_id):
+        resp = db_client.get(
+            f"/wallet/{funded_character_id}/transactions?tx_type=sell",
+            headers=auth_header,
+        )
+        assert resp.status_code == 200
+        assert len(resp.json()["transactions"]) == 0
+
+
+class TestTransactionEntryFields:
+    """TransactionEntry includes all audit fields."""
+
+    def test_full_fields_present(self, db_client, auth_header, character_id):
+        db_client.post(
+            "/wallet/grant",
+            json={"character_id": character_id, "currency": "gold", "amount": 100, "note": "Test"},
+            headers=auth_header,
+        )
+
+        resp = db_client.get(
+            f"/wallet/{character_id}/transactions",
+            headers=auth_header,
+        )
+        tx = resp.json()["transactions"][0]
+        for field in ["session_id", "quest_id", "base_price", "markup_pct", "faction_modifier", "sell_back_ratio"]:
+            assert field in tx
+
+
+class TestQuestRewardStructuredQuestId:
+    """quest_reward passes quest_id as a structured column, not just in note."""
+
+    @pytest.mark.asyncio()
+    async def test_quest_id_in_transaction(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from relay.economy.wallet import quest_reward
+
+        db = AsyncMock()
+        db.add = MagicMock()
+        char = MagicMock()
+        char.wallet = {"gold": 100}
+        char.player_id = "p1"
+        char.id = "c1"
+        char.world_id = "inkglass_dark"
+        char.updated_at = None
+
+        await quest_reward(
+            db,
+            char,
+            currency="gold",
+            amount=50,
+            quest_id="find_the_sword",
+        )
+
+        tx = db.add.call_args[0][0]
+        assert tx.quest_id == "find_the_sword"
+        assert tx.tx_type == "quest_reward"
+
+
+class TestGetBalanceSync:
+    """get_balance is now sync — no await needed."""
+
+    def test_get_balance_returns_int(self):
+        from unittest.mock import MagicMock
+
+        from relay.economy.wallet import get_balance
+
+        char = MagicMock()
+        char.wallet = {"gold": 250}
+        assert get_balance(char, "gold") == 250
+        assert get_balance(char, "missing") == 0
+
+
+class TestNpcFactionIdNone:
+    """_npc_faction_id returns None when NPC has no faction_id and no world_position."""
+
+    def test_returns_none_for_no_faction_no_position(self):
+        from relay.economy.shop import _npc_faction_id
+
+        npc = _make_shop_npc(faction_region="market_district")
+        # Remove world_position to simulate NPC with no location data
+        object.__setattr__(npc, "world_position", None)
+        object.__setattr__(npc, "faction_id", None)
+        assert _npc_faction_id(npc) is None
+
+    def test_neutral_pricing_when_no_faction(self):
+        """NPC without faction should yield neutral pricing."""
+        npc = _make_shop_npc(faction_region="market_district")
+        object.__setattr__(npc, "world_position", None)
+        object.__setattr__(npc, "faction_id", None)
+
+        items = {"iron_sword": _make_item(item_id="iron_sword", value=100)}
+
+        class FakeChar:
+            faction_standing = {"some_faction": 80}  # Allied with some other faction
+
+        quotes = get_shop_prices(npc=npc, items=items, character=FakeChar())
+        assert len(quotes) == 1
+        # Should be neutral (no faction → standing 0 → neutral) with 10% markup
+        assert quotes[0].faction_tier == "neutral"
+        assert quotes[0].buy_price == 110  # 100 * 1.10 * 1.0
+
+
+class TestSellBackRatioOverride:
+    """World-specific sell_back_ratio is threaded through shop operations."""
+
+    def test_custom_sell_back_ratio_in_quotes(self):
+        npc = _make_shop_npc()
+        items = {"iron_sword": _make_item(item_id="iron_sword", value=100)}
+
+        class FakeChar:
+            faction_standing = {}
+
+        # Default ratio (0.50) → sell price = 50
+        quotes_default = get_shop_prices(npc=npc, items=items, character=FakeChar())
+        assert quotes_default[0].sell_price == 50
+
+        # Custom ratio (0.70) → sell price = 70
+        quotes_custom = get_shop_prices(
+            npc=npc, items=items, character=FakeChar(), sell_back_ratio=0.70
+        )
+        assert quotes_custom[0].sell_price == 70
+
+    def test_zero_sell_back_ratio(self):
+        """A world with 0% sell-back yields 0 sell price."""
+        npc = _make_shop_npc()
+        items = {"iron_sword": _make_item(item_id="iron_sword", value=100)}
+
+        class FakeChar:
+            faction_standing = {}
+
+        quotes = get_shop_prices(npc=npc, items=items, character=FakeChar(), sell_back_ratio=0.0)
+        assert quotes[0].sell_price == 0
+
+
+class TestReputationThresholdsValidation:
+    """Pydantic model_validator enforces threshold ordering."""
+
+    def test_valid_thresholds_pass(self):
+        from relay.schemas import ReputationThresholds
+
+        rt = ReputationThresholds(hostile=-51, unfriendly=-50, neutral=0, friendly=1, allied=51)
+        assert rt.hostile == -51
+
+    def test_invalid_ordering_raises(self):
+        from pydantic import ValidationError
+
+        from relay.schemas import ReputationThresholds
+
+        with pytest.raises(ValidationError, match="must be ordered"):
+            ReputationThresholds(hostile=10, unfriendly=5, neutral=0, friendly=1, allied=51)
+
+    def test_hostile_equal_to_unfriendly_invalid(self):
+        from pydantic import ValidationError
+
+        from relay.schemas import ReputationThresholds
+
+        with pytest.raises(ValidationError, match="must be ordered"):
+            # hostile < unfriendly is required (strict), not <=
+            ReputationThresholds(hostile=-50, unfriendly=-50, neutral=0, friendly=1, allied=51)
+
+    def test_friendly_equal_to_allied_invalid(self):
+        from pydantic import ValidationError
+
+        from relay.schemas import ReputationThresholds
+
+        with pytest.raises(ValidationError, match="must be ordered"):
+            # friendly < allied is required (strict)
+            ReputationThresholds(hostile=-51, unfriendly=-50, neutral=0, friendly=51, allied=51)
+
+    def test_neutral_boundaries_allow_equality(self):
+        """unfriendly <= neutral and neutral <= friendly are allowed."""
+        from relay.schemas import ReputationThresholds
+
+        rt = ReputationThresholds(hostile=-51, unfriendly=0, neutral=0, friendly=0, allied=51)
+        assert rt.neutral == 0
+
+
+class TestShopPriceModifiersSchema:
+    """ShopPriceModifiers Pydantic model validation."""
+
+    def test_valid_modifiers(self):
+        from relay.schemas import ShopPriceModifiers
+
+        mods = ShopPriceModifiers(allied=0.80, friendly=0.90)
+        assert mods.allied == 0.80
+        assert mods.neutral is None
+
+    def test_extra_fields_rejected(self):
+        from relay.schemas import ShopPriceModifiers
+
+        with pytest.raises(Exception):  # noqa: B017
+            ShopPriceModifiers(allied=0.80, legendary=0.50)
 
 
 class TestGatherTransactionLog:

@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from relay.registry import DAMAGE_TYPES
 
@@ -220,11 +220,19 @@ class ShopInventoryEntry(BaseModel):
     markup_percentage: float
 
 
+class AccessPrerequisites(BaseModel):
+    faction_standing_threshold: int | None = None
+    level_requirement: int | None = None
+    quest_flags: list[str] | None = None
+
+    model_config = {"extra": "forbid"}
+
+
 class ShopData(BaseModel):
     inventory: list[ShopInventoryEntry]
     pricing_policy: str
     restock_schedule: Literal["daily", "weekly", "never"]
-    access_prerequisites: dict | None = None
+    access_prerequisites: AccessPrerequisites | None = None
 
 
 class CompanionRecruitment(BaseModel):
@@ -299,7 +307,8 @@ class NpcPersonality(BaseModel):
     conditions: list[dict] | None = None
     notable_equipment: list[str] | None = None
 
-    # Conditional sections
+    # Faction and conditional sections
+    faction_id: str | None = None
     shop_data: ShopData | None = None
     companion_data: CompanionData | None = None
 
@@ -465,14 +474,45 @@ class ReputationThresholds(BaseModel):
     friendly: int
     allied: int
 
+    @model_validator(mode="after")
+    def _check_ordering(self) -> ReputationThresholds:
+        """Thresholds must be strictly ordered: hostile < unfriendly ≤ neutral ≤ friendly < allied."""
+        if not (self.hostile < self.unfriendly <= self.neutral <= self.friendly < self.allied):
+            raise ValueError(
+                f"Reputation thresholds must be ordered "
+                f"hostile({self.hostile}) < unfriendly({self.unfriendly}) "
+                f"<= neutral({self.neutral}) <= friendly({self.friendly}) "
+                f"< allied({self.allied})"
+            )
+        return self
+
+
+class ShopPriceModifiers(BaseModel):
+    """Per-faction buy-price multipliers (docs/faction system.pdf).
+
+    Values are direct multipliers applied to the markup-adjusted price:
+    0.80 means "allied pays 80% of base+markup" (a 20% discount).
+    When not provided on a faction, the global defaults in pricing.py apply.
+    """
+
+    allied: float | None = None
+    friendly: float | None = None
+    neutral: float | None = None
+    unfriendly: float | None = None
+
+    model_config = {"extra": "forbid"}
+
 
 class Faction(BaseModel):
     id: str = Field(min_length=1)
+    world_id: str | None = None
     name: str = Field(min_length=1)
     allied_factions: list[str]
     rival_factions: list[str]
     reputation_thresholds: ReputationThresholds
     description: str
+    shop_price_modifiers: ShopPriceModifiers | None = None
+    notable_npcs: list[str] | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -486,6 +526,24 @@ class GatheringNode(BaseModel):
     item_id: str = Field(min_length=1)
     skill: str = Field(min_length=1)
     dc: int = Field(ge=1, le=30)
+    yield_min: int | None = Field(default=None, ge=1, le=20)
+    yield_max: int | None = Field(default=None, ge=1, le=20)
+
+    @model_validator(mode="after")
+    def _validate_node(self) -> GatheringNode:
+        from relay.registry import SKILLS
+
+        if self.skill not in SKILLS:
+            raise ValueError(
+                f"Unknown gathering skill '{self.skill}'; "
+                f"valid: {sorted(SKILLS)}"
+            )
+        if self.yield_min is not None and self.yield_max is not None:
+            if self.yield_min > self.yield_max:
+                raise ValueError(
+                    f"yield_min ({self.yield_min}) must be <= yield_max ({self.yield_max})"
+                )
+        return self
 
 
 class LevelRange(BaseModel):
