@@ -5,6 +5,7 @@ Prompt caching tiers (CLAUDE.md §2.3):
  - Tier 2 (session-stable): scene context, NPC memory summary
  - Tier 3 (dynamic, never cached): player input, check results, turn-specific data
 """
+
 from __future__ import annotations
 
 from relay.schemas import NpcPersonality
@@ -17,16 +18,11 @@ def build_rp_system_prompt(npc: NpcPersonality) -> list[dict]:
     Anthropic API caches the static NPC personality across turns (Tier 1).
     """
     examples = "\n\n".join(
-        f"[{ex.context_tag}]\n"
-        f"Player: {ex.player_input}\n"
-        f"{npc.name}: {ex.npc_response}"
-        for ex in npc.few_shot_examples
+        f"[{ex.context_tag}]\nPlayer: {ex.player_input}\n{npc.name}: {ex.npc_response}" for ex in npc.few_shot_examples
     )
 
     resistance = "\n\n".join(
-        f"Player: {ex.player_input}\n"
-        f"{npc.name}: {ex.npc_refusal}"
-        for ex in npc.manipulation_resistance_examples
+        f"Player: {ex.player_input}\n{npc.name}: {ex.npc_refusal}" for ex in npc.manipulation_resistance_examples
     )
 
     goals_imm = ", ".join(npc.goals.immediate)
@@ -128,10 +124,12 @@ def build_analysis_messages(
 ) -> list[dict[str, str]]:
     """Build the message list for the first LLM call (structured analysis)."""
     messages = list(history)
-    messages.append({
-        "role": "user",
-        "content": f"{player_prose}\n\n---\n{ANALYSIS_INSTRUCTION}",
-    })
+    messages.append(
+        {
+            "role": "user",
+            "content": f"{player_prose}\n\n---\n{ANALYSIS_INSTRUCTION}",
+        }
+    )
     return messages
 
 
@@ -156,6 +154,7 @@ def build_final_prose_messages(
     """
     # Build check results section
     if check_results:
+
         def _format_check(cr: dict) -> str:
             mode = cr.get("roll_mode", "straight")
             mode_label = f" with {mode}" if mode != "straight" else ""
@@ -176,9 +175,7 @@ The following checks were resolved by the game system:
 
     # Build passive hints section (#10)
     if passive_hints:
-        hints_text = "\n".join(
-            f"- The player passively noticed: {h['hint']}" for h in passive_hints if h.get("hint")
-        )
+        hints_text = "\n".join(f"- The player passively noticed: {h['hint']}" for h in passive_hints if h.get("hint"))
         passive_section = f"""
 The player's passive awareness revealed the following (weave naturally into your response):
 {hints_text}

@@ -32,7 +32,7 @@ TxType = Literal[
 ]
 
 
-class InsufficientFunds(Exception):
+class InsufficientFundsError(Exception):
     """Raised when a debit would take the balance below zero."""
 
     def __init__(self, currency: str, balance: int, amount: int) -> None:
@@ -136,7 +136,7 @@ async def debit(
 ) -> int:
     """Remove funds from a character's wallet and log the transaction.
 
-    Raises InsufficientFunds if the balance would go negative.
+    Raises InsufficientFundsError if the balance would go negative.
     Returns the new balance.
     """
     if amount < 0:
@@ -145,7 +145,7 @@ async def debit(
     wallet = dict(character.wallet or {})
     old_balance = wallet.get(currency, 0)
     if old_balance < amount:
-        raise InsufficientFunds(currency, old_balance, amount)
+        raise InsufficientFundsError(currency, old_balance, amount)
 
     new_balance = old_balance - amount
     wallet[currency] = new_balance

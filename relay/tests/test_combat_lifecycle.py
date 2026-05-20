@@ -8,23 +8,17 @@ from relay.combat.lifecycle import on_round_start, on_turn_end, on_turn_start
 
 class TestOnTurnEnd:
     def test_ticks_turn_durations(self) -> None:
-        state = add_condition(
-            [], "poisoned", source="venom", duration_remaining=2, duration_unit="turns"
-        )
+        state = add_condition([], "poisoned", source="venom", duration_remaining=2, duration_unit="turns")
         result = on_turn_end(state)
         assert result[0]["duration_remaining"] == 1
 
     def test_expires_at_zero(self) -> None:
-        state = add_condition(
-            [], "poisoned", source="venom", duration_remaining=1, duration_unit="turns"
-        )
+        state = add_condition([], "poisoned", source="venom", duration_remaining=1, duration_unit="turns")
         result = on_turn_end(state)
         assert result == []
 
     def test_does_not_tick_round_unit(self) -> None:
-        state = add_condition(
-            [], "poisoned", source="spell", duration_remaining=2, duration_unit="rounds"
-        )
+        state = add_condition([], "poisoned", source="spell", duration_remaining=2, duration_unit="rounds")
         result = on_turn_end(state)
         assert result[0]["duration_remaining"] == 2
 
@@ -42,9 +36,7 @@ class TestOnRoundStart:
         assert result[0]["duration_remaining"] == 2
 
     def test_does_not_tick_turn_unit(self) -> None:
-        state = add_condition(
-            [], "poisoned", source="venom", duration_remaining=2, duration_unit="turns"
-        )
+        state = add_condition([], "poisoned", source="venom", duration_remaining=2, duration_unit="turns")
         result = on_round_start(state)
         assert result[0]["duration_remaining"] == 2
 
@@ -62,16 +54,12 @@ class TestOnRoundStart:
 
 class TestOnTurnStart:
     def test_passthrough(self) -> None:
-        state = add_condition(
-            [], "poisoned", source="venom", duration_remaining=3, duration_unit="turns"
-        )
+        state = add_condition([], "poisoned", source="venom", duration_remaining=3, duration_unit="turns")
         result = on_turn_start(state)
         assert result == state
 
     def test_returns_independent_list(self) -> None:
-        state = add_condition(
-            [], "poisoned", source="venom", duration_remaining=3, duration_unit="turns"
-        )
+        state = add_condition([], "poisoned", source="venom", duration_remaining=3, duration_unit="turns")
         result = on_turn_start(state)
         result.clear()
         assert len(state) == 1

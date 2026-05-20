@@ -577,9 +577,7 @@ class TestCustomThresholdPricing:
         assert default_sell == 60
 
         # Custom strict: 55 → friendly → 0.50 + 0.05 = 55
-        custom_sell = compute_sell_price(
-            base_value=100, faction_standing=55, reputation_thresholds=strict
-        )
+        custom_sell = compute_sell_price(base_value=100, faction_standing=55, reputation_thresholds=strict)
         assert custom_sell == 55
 
     def test_shop_price_modifiers_override_global(self):

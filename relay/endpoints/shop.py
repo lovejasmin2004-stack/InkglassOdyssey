@@ -18,12 +18,12 @@ from relay.auth.middleware import get_current_token
 from relay.auth.tokens import AccountTokenPayload, SessionTokenPayload
 from relay.database import get_db
 from relay.economy.shop import (
-    BoundItemCannotSell,
-    HostileFaction,
-    ItemNotInInventory,
-    ItemNotInShop,
-    LegendaryCannotPurchase,
-    OutOfStock,
+    BoundItemCannotSellError,
+    HostileFactionError,
+    ItemNotInInventoryError,
+    ItemNotInShopError,
+    LegendaryCannotPurchaseError,
+    OutOfStockError,
     _extract_price_modifiers,
     _extract_thresholds,
     _load_faction_data,
@@ -32,7 +32,7 @@ from relay.economy.shop import (
     get_shop_prices,
     sell_item,
 )
-from relay.economy.wallet import InsufficientFunds
+from relay.economy.wallet import InsufficientFundsError
 from relay.endpoints._helpers import load_character_owned
 from relay.schemas import Item, NpcPersonality
 from relay.world.item_loader import load_item
@@ -255,27 +255,27 @@ async def buy_from_shop(
             item=item,
             quantity=body.quantity,
         )
-    except HostileFaction:
+    except HostileFactionError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"code": "hostile_faction", "message": "Shop refuses to trade with you"},
         ) from None
-    except LegendaryCannotPurchase:
+    except LegendaryCannotPurchaseError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "legendary_cannot_purchase", "message": "Legendary items cannot be purchased"},
         ) from None
-    except ItemNotInShop:
+    except ItemNotInShopError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "item_not_in_shop", "message": f"Item '{body.item_id}' not in this shop"},
         ) from None
-    except OutOfStock:
+    except OutOfStockError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "out_of_stock", "message": "Shop is out of stock for this item"},
         ) from None
-    except InsufficientFunds as exc:
+    except InsufficientFundsError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "insufficient_funds", "message": str(exc)},
@@ -312,17 +312,17 @@ async def sell_to_shop(
             item=item,
             quantity=body.quantity,
         )
-    except HostileFaction:
+    except HostileFactionError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"code": "hostile_faction", "message": "Shop refuses to trade with you"},
         ) from None
-    except ItemNotInInventory:
+    except ItemNotInInventoryError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "item_not_in_inventory", "message": "You don't have enough of that item"},
         ) from None
-    except BoundItemCannotSell:
+    except BoundItemCannotSellError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "bound_item", "message": "Bound items cannot be sold"},

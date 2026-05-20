@@ -6,6 +6,7 @@ Run the relay first:
 Then:
     python -m relay.tests.test_dialogue_live
 """
+
 from __future__ import annotations
 
 import asyncio

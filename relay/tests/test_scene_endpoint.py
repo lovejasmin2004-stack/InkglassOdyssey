@@ -28,7 +28,9 @@ def other_auth():
 
 @pytest.fixture()
 def dm_header():
-    return {"Authorization": f"Bearer {create_session_token(player_id='p1', world_id='inkglass_dark', session_id='s1', tier=1, role='dm', mode='solo')}"}
+    return {
+        "Authorization": f"Bearer {create_session_token(player_id='p1', world_id='inkglass_dark', session_id='s1', tier=1, role='dm', mode='solo')}"
+    }
 
 
 @pytest.fixture()
@@ -39,7 +41,14 @@ def character_id(db_client, auth_header):
             "world_id": "inkglass_dark",
             "name": "Test",
             "specialisation_path_id": "scout",
-            "ability_scores": {"strength": 10, "dexterity": 14, "constitution": 12, "intelligence": 10, "wisdom": 14, "charisma": 10},
+            "ability_scores": {
+                "strength": 10,
+                "dexterity": 14,
+                "constitution": 12,
+                "intelligence": 10,
+                "wisdom": 14,
+                "charisma": 10,
+            },
             "skill_proficiencies": ["perception"],
             "saving_throw_proficiencies": ["dexterity", "wisdom"],
         },

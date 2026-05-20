@@ -11,7 +11,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 from relay.combat.conditions import (
     apply_condition,
     get_attack_modifiers,

@@ -18,3 +18,8 @@ Builds/
 .DS_Store
 Thumbs.db
 .trash/
+.claude/settings.local.json
+.coverage
+# Loose root-level PDFs (working copies; canonical docs live in docs/)
+/CLAUDE\ (1).pdf
+/multiplayer\ divergence.pdf

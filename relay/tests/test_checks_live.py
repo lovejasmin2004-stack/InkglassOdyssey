@@ -6,6 +6,7 @@ Then:  python -m relay.tests.test_checks_live 8003
 Test 1: "I try to pick the lock" -> should identify a check (dexterity-based)
 Test 2: "I attack from the shadows" -> should identify a check with advantage
 """
+
 from __future__ import annotations
 
 import asyncio

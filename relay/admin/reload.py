@@ -47,7 +47,7 @@ CONTENT_TYPES: dict[str, dict[str, Any]] = {
     "scenarios": {"dir": "scenarios", "schema": "scenario.json"},
     "fauna": {"dir": "fauna", "schema": "fauna.json"},
     "lore": {"dir": "lore", "schema": "lore.json"},
-    "regions": {"dir": "regions", "schema": "region.json"},
+    "regions": {"dir": "regions", "schema": "region.json", "exclude": {"world_config"}},
     "animations": {"dir": "animations", "schema": None},
 }
 
@@ -146,8 +146,12 @@ def _build_index_sync(content_type: str, world_id: str) -> list[dict[str, Any]]:
     if not directory.is_dir():
         return []
 
+    exclude_ids: set[str] = CONTENT_TYPES[content_type].get("exclude", set())
+
     results: list[dict[str, Any]] = []
     for path in sorted(directory.glob("*.json")):
+        if path.stem in exclude_ids:
+            continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             entry: dict[str, Any] = {"id": path.stem}

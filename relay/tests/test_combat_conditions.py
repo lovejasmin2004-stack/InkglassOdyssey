@@ -13,9 +13,7 @@ from relay.combat.conditions import (
 
 class TestAddCondition:
     def test_add_simple_condition(self) -> None:
-        result = add_condition(
-            [], "poisoned", source="spider_venom", duration_remaining=3
-        )
+        result = add_condition([], "poisoned", source="spider_venom", duration_remaining=3)
         assert len(result) == 1
         assert result[0]["condition_id"] == "poisoned"
         assert result[0]["source"] == "spider_venom"
@@ -79,16 +77,12 @@ class TestRemoveCondition:
 
 class TestTickDurations:
     def test_decrement_matching_unit(self) -> None:
-        state = add_condition(
-            [], "poisoned", source="venom", duration_remaining=3, duration_unit="turns"
-        )
+        state = add_condition([], "poisoned", source="venom", duration_remaining=3, duration_unit="turns")
         result = tick_durations(state, unit="turns")
         assert result[0]["duration_remaining"] == 2
 
     def test_expiry_removes_condition(self) -> None:
-        state = add_condition(
-            [], "poisoned", source="venom", duration_remaining=1, duration_unit="turns"
-        )
+        state = add_condition([], "poisoned", source="venom", duration_remaining=1, duration_unit="turns")
         result = tick_durations(state, unit="turns")
         assert result == []
 
@@ -104,9 +98,7 @@ class TestTickDurations:
         assert result == []
 
     def test_mismatched_unit_untouched(self) -> None:
-        state = add_condition(
-            [], "poisoned", source="venom", duration_remaining=3, duration_unit="turns"
-        )
+        state = add_condition([], "poisoned", source="venom", duration_remaining=3, duration_unit="turns")
         result = tick_durations(state, unit="rounds")
         assert result[0]["duration_remaining"] == 3
 

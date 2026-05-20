@@ -22,7 +22,7 @@ Read the relevant design document **before** working on the listed directories o
 | docs/narrative control.pdf | relay/narrative/, relay/admin/ | Admin/DM/Solo interfaces, content override model, plot beats, world reset, admin interface |
 | docs/schemas reference.pdf | /schemas/, relay/schemas.py | Complete field definitions for all JSON schemas |
 | docs/narrative control.pdf | Narrative endpoints, Workshop UI | Canonical spec for narrative control panels and plot beat schema |
-| docs/prompt_engineering.md | relay/ai/rp_prompts.py, chat_prompts.py | Prompt structure, few-shot format, check result integration |
+| docs/prompt_engineering.md (planned) | relay/ai/rp_prompts.py, chat_prompts.py | Prompt structure, few-shot format, check result integration |
 
 ## 1. What This Project Is
 
@@ -106,27 +106,27 @@ TTS deferred to Phase 4 (ADR required for provider selection).
 
 *Full specifications in the linked design documents. These summaries exist so Claude Code knows the systems exist and where to find detail.*
 
-**Progression (3.2):** D&D-inspired, levels 1–20 in four bands (Newcomer/Established/Known/Legendary). Six canonical ability scores with per-world display names. Level-up at session end via POST /session/end. See docs/combat_system.md for HP formula and specialisation paths.
+**Progression (3.2):** D&D-inspired, levels 1–20 in four bands (Newcomer/Established/Known/Legendary). Six canonical ability scores with per-world display names. Level-up at session end via POST /session/end. See docs/combat system.pdf for HP formula and specialisation paths.
 
-**Economy (3.3):** per-world currencies, relay-authoritative wallets. Earning rates, pricing, sell-back, transport fares, and crafting margins defined in docs/economy_balance.md.
+**Economy (3.3):** per-world currencies, relay-authoritative wallets. Earning rates, pricing, sell-back, transport fares, and crafting margins defined in docs/economy balance.pdf.
 
-**Items and gear (3.4):** type-specific stats blocks, binding system, rarity-scaled damage/healing/pricing. See docs/economy_balance.md.
+**Items and gear (3.4):** type-specific stats blocks, binding system, rarity-scaled damage/healing/pricing. See docs/economy balance.pdf.
 
-**Flora, fauna, gathering (3.5–3.6):** region-defined, check-gated. Sapient fauna are NPCs (entity_class: creature). Gathering yields in docs/economy_balance.md.
+**Flora, fauna, gathering (3.5–3.6):** region-defined, check-gated. Sapient fauna are NPCs (entity_class: creature). Gathering yields in docs/economy balance.pdf.
 
-**Crafting (3.7):** recipe-driven, check-resolved, profitability-balanced. See docs/economy_balance.md.
+**Crafting (3.7):** recipe-driven, check-resolved, profitability-balanced. See docs/economy balance.pdf.
 
 **Shops (3.8):** NPC-operated, faction-price-modified, prerequisite-gated. Haggling via implicit checks.
 
-**Combat (3.9):** AC, attack rolls, saving throws, advantage/disadvantage, damage types with resistance/vulnerability/immunity, conditions, action economy, initiative, death state, passive checks, rest. Full specification in docs/combat_system.md.
+**Combat (3.9):** AC, attack rolls, saving throws, advantage/disadvantage, damage types with resistance/vulnerability/immunity, conditions, action economy, initiative, death state, passive checks, rest. Full specification in docs/combat system.pdf.
 
-**Companions (3.10):** recruitment scenarios, combat AI with behavior types, incapacitation/loyalty strain, ambient behaviour, session persistence, post-reset reunion. Full specification in docs/companion_system.md.
+**Companions (3.10):** recruitment scenarios, combat AI with behavior types, incapacitation/loyalty strain, ambient behaviour, session persistence, post-reset reunion. Full specification in docs/companion system.pdf.
 
-**Factions (3.11):** -100 to 100 standing, five tiers, propagation to allied/rival factions. Full specification in docs/faction_system.md.
+**Factions (3.11):** -100 to 100 standing, five tiers, propagation to allied/rival factions. Full specification in docs/faction system.pdf.
 
-**Environmental interaction (3.12):** scene-state modifiers (darkness, terrain, elevation, weather, hazards). See docs/combat_system.md.
+**Environmental interaction (3.12):** scene-state modifiers (darkness, terrain, elevation, weather, hazards). See docs/combat system.pdf.
 
-**Narrative control (2.11):** Admin Workshop / DM Workshop / Narrative Control Panel. Content override model, plot beats, world reset. See docs/narrative_control.md and docs/narrative-control-ui.pdf.
+**Narrative control (2.11):** Admin Workshop / DM Workshop / Narrative Control Panel. Content override model, plot beats, world reset. See docs/narrative control.pdf (narrative-control-ui.pdf planned).
 
 ## 4. Traversal System
 
@@ -155,8 +155,8 @@ inkglass/
 │   ├── content_authoring.md
 │   ├── narrative_control.md
 │   ├── schemas_reference.md
-│   ├── narrative-control-ui.pdf
-│   └── prompt_engineering.md
+│   ├── narrative-control-ui.pdf    (planned)
+│   └── prompt_engineering.md       (planned)
 ├── relay/
 │   ├── main.py
 │   ├── config.py
@@ -213,7 +213,7 @@ inkglass/
 
 ## 6. Schema Definitions
 
-All schemas are fully defined in docs/schemas_reference.md. Pydantic models in relay/schemas.py mirror /schemas/*.json exactly. CI validates all content files against schemas on every push.
+All schemas are fully defined in docs/schemas reference.pdf. Pydantic models in relay/schemas.py mirror /schemas/*.json exactly. CI validates all content files against schemas on every push.
 
 ## 7. Code Conventions
 
@@ -241,7 +241,7 @@ Filenames snake_case, match the `id` field. Lower-case ASCII only in IDs. Valida
 
 ### 7.4 NPC Personality File Authoring
 
-Every NPC file must pass the probe suite before merge. Shop/transport NPCs validated against their respective sub-schemas. See docs/content_authoring.md for quality guidelines.
+Every NPC file must pass the probe suite before merge. Shop/transport NPCs validated against their respective sub-schemas. See docs/content authoring.pdf for quality guidelines.
 
 ### 7.5 CI Pipeline (GitHub Actions)
 
@@ -262,7 +262,7 @@ All errors: `{ code (string), message (string), turn_id (optional), narrative_hi
 
 POST /session/start, POST /session/end (includes level_increment + canon diff), GET /session/{id}/state, GET/POST/PATCH /character, GET /npc/{id}, WS /dialogue, POST/GET/POST /scene, POST /dice/roll, POST /checks/implicit, POST/GET/POST /combat, GET/PATCH /quest, GET /lore/search, GET/POST/PATCH /canon, GET flora/fauna, POST /gather, GET/POST /shop, POST /craft, GET/PATCH /inventory, POST /traversal, PATCH /player position, GET /analytics.
 
-Full endpoint tables including companion, faction, narrative control, DM workshop, and admin endpoints are in the v5 reference and docs/narrative_control.md.
+Full endpoint tables including companion, faction, narrative control, DM workshop, and admin endpoints are in the v5 reference and docs/narrative control.pdf.
 
 ## 9. Database Migration
 
@@ -284,7 +284,7 @@ Per-session metrics: llm_call_count (expected: 2 RP standard, 3 with solo check 
 
 *Sexual content involving characters whose age is ambiguous or who could be interpreted as minors is absolutely prohibited.*
 
-**content_rating** (moderate | mature) defined per world. Moderate: violence implied/aftermath. Mature: violence with physical detail and consequence — not gratuitous. See docs/content_authoring.md for full guidelines.
+**content_rating** (moderate | mature) defined per world. Moderate: violence implied/aftermath. Mature: violence with physical detail and consequence — not gratuitous. See docs/content authoring.pdf for full guidelines.
 
 Fandom AU: no canon dialogue, no canon names, no recognisable locations. NPC files must not extract real-world harmful information. Access revocation for harmful content abuse.
 

@@ -10,6 +10,7 @@ This test:
 4. Reconnects and verifies recovery data is sent
 5. Checks session state shows the pending turn
 """
+
 from __future__ import annotations
 
 import asyncio

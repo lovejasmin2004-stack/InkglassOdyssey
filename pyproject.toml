@@ -3,6 +3,23 @@ name = "inkglass-relay"
 version = "0.1.0"
 description = "AI-narrative relay service for Inkglass Odyssey"
 requires-python = ">=3.12"
+# Runtime dependencies pinned in requirements.txt (deployment manifest).
+# Core packages listed here for tooling/discoverability.
+dependencies = [
+    "fastapi>=0.136",
+    "uvicorn>=0.46",
+    "sqlalchemy>=2.0",
+    "aiosqlite>=0.22",
+    "alembic>=1.18",
+    "anthropic>=0.97",
+    "pydantic>=2.13",
+    "pydantic-settings>=2.0",
+    "pyjwt>=2.12",
+    "jsonschema>=4.26",
+    "python-dotenv>=1.2",
+    "httpx>=0.28",
+    "websockets>=16.0",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -31,6 +48,11 @@ ignore = [
     "B008",  # function call in default arg (FastAPI Depends pattern)
     "SIM117",  # nested with -- often needed when inner context uses outer variable
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Live integration tests use print() for interactive output
+"relay/tests/test_*_live.py" = ["T201"]
+"relay/tests/test_checks_live.py" = ["T201"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["relay"]

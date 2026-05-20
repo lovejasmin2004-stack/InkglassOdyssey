@@ -57,9 +57,7 @@ PASSIVE_SKILLS: tuple[str, ...] = ("perception", "insight", "investigation")
 """Skills evaluated as passive checks against hidden scene elements (Invariant #22)."""
 
 
-SOCIAL_SKILLS: frozenset[str] = frozenset(
-    {"intimidation", "persuasion", "deception", "performance"}
-)
+SOCIAL_SKILLS: frozenset[str] = frozenset({"intimidation", "persuasion", "deception", "performance"})
 """Skills affected by the charmed condition's social advantage."""
 
 
@@ -236,7 +234,9 @@ def exhaustion_def(level: int) -> ConditionDef:
         f"exhaustion_{level}",
         disadvantage_on_all_checks=True,
         disadvantage_on_attacks=level >= 3,
-        disadvantage_on_saves=("strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma") if level >= 3 else (),
+        disadvantage_on_saves=("strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma")
+        if level >= 3
+        else (),
         speed_zero=level >= 5,
     )
 

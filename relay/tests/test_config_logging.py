@@ -16,8 +16,16 @@ from relay.logging_config import JSONFormatter, _redact, setup_logging
 
 
 class TestSettings:
-    def test_defaults(self):
-        s = Settings(ANTHROPIC_API_KEY="key", INKGLASS_JWT_SECRET="secret")
+    def test_defaults(self, monkeypatch):
+        # Isolate from .env so ADMIN_MODE etc. don't leak into the test.
+        monkeypatch.delenv("ADMIN_MODE", raising=False)
+        monkeypatch.delenv("ENVIRONMENT", raising=False)
+        monkeypatch.delenv("LOG_LEVEL", raising=False)
+        s = Settings(
+            ANTHROPIC_API_KEY="key",
+            INKGLASS_JWT_SECRET="secret",
+            _env_file=None,
+        )
         assert s.anthropic_api_key == "key"
         assert s.jwt_secret == "secret"
         assert s.database_url == "sqlite+aiosqlite:///./inkglass.db"
@@ -26,16 +34,16 @@ class TestSettings:
         assert s.log_level == "INFO"
 
     def test_admin_mode_bool_coercion(self):
-        s = Settings(ANTHROPIC_API_KEY="k", INKGLASS_JWT_SECRET="s", ADMIN_MODE="true")
+        s = Settings(ANTHROPIC_API_KEY="k", INKGLASS_JWT_SECRET="s", ADMIN_MODE="true", _env_file=None)
         assert s.admin_mode is True
 
     def test_invalid_log_level_rejected(self):
-        with pytest.raises(Exception):
-            Settings(ANTHROPIC_API_KEY="k", INKGLASS_JWT_SECRET="s", LOG_LEVEL="YOLO")
+        with pytest.raises(ValueError):
+            Settings(ANTHROPIC_API_KEY="k", INKGLASS_JWT_SECRET="s", LOG_LEVEL="YOLO", _env_file=None)
 
     def test_invalid_environment_rejected(self):
-        with pytest.raises(Exception):
-            Settings(ANTHROPIC_API_KEY="k", INKGLASS_JWT_SECRET="s", ENVIRONMENT="mars")
+        with pytest.raises(ValueError):
+            Settings(ANTHROPIC_API_KEY="k", INKGLASS_JWT_SECRET="s", ENVIRONMENT="mars", _env_file=None)
 
     def test_production_requires_secrets(self):
         with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):

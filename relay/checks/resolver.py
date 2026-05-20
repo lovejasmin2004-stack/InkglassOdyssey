@@ -396,8 +396,7 @@ def compute_passive_check(
     base = 10 + mod + prof
 
     has_disadvantage = any(
-        _condition_disadvantage_on_skill(cond.get("condition_id", ""), skill)
-        for cond in (conditions or [])
+        _condition_disadvantage_on_skill(cond.get("condition_id", ""), skill) for cond in (conditions or [])
     )
     if has_disadvantage:
         base -= 5

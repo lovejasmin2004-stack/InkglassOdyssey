@@ -109,7 +109,7 @@ class TestRateLimitEnforcement:
         headers = _auth("exhaust_player")
 
         successes = 0
-        for i in range(_DEFAULT_RPM + 5):
+        for _i in range(_DEFAULT_RPM + 5):
             resp = client.get("/me", headers=headers)
             if resp.status_code == 200:
                 successes += 1

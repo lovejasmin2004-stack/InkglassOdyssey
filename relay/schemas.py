@@ -72,14 +72,10 @@ class ConditionEntry(BaseModel):
     condition_id: str
     instance_id: str | None = None
     duration_remaining: int | None = Field(default=None, ge=0)
-    duration_unit: Literal[
-        "rounds", "turns", "minutes", "until_long_rest", "permanent"
-    ] = "turns"
+    duration_unit: Literal["rounds", "turns", "minutes", "until_long_rest", "permanent"] = "turns"
     rider_of: str | None = None
     source: str
-    source_type: Literal[
-        "spell", "feature", "environment", "item", "scenario", "other"
-    ] = "other"
+    source_type: Literal["spell", "feature", "environment", "item", "scenario", "other"] = "other"
 
     # Legacy fields retained for backward compatibility with stored JSON.
     duration_turns: int | None = Field(default=None, ge=0)
@@ -168,17 +164,13 @@ class NpcKnowledgeBoundaries(BaseModel):
 
 class NpcRelationship(BaseModel):
     npc_id: str
-    relationship_type: Literal[
-        "ally", "rival", "subordinate", "mentor", "family", "trading_partner", "unknown"
-    ]
+    relationship_type: Literal["ally", "rival", "subordinate", "mentor", "family", "trading_partner", "unknown"]
     description: str
 
 
 class NpcSecret(BaseModel):
     content: str
-    reveal_condition: Literal[
-        "relationship_threshold", "quest_flag", "check_type_and_dc", "never"
-    ]
+    reveal_condition: Literal["relationship_threshold", "quest_flag", "check_type_and_dc", "never"]
     secret_type: Literal["information", "identity"]
     reveal_threshold: int | None = None
     reveal_quest_flag: str | None = None
@@ -288,9 +280,7 @@ class NpcPersonality(BaseModel):
     relationships: list[NpcRelationship]
     secrets: list[NpcSecret] = Field(min_length=1)
     few_shot_examples: list[FewShotExample] = Field(min_length=2)
-    manipulation_resistance_examples: list[ManipulationResistanceExample] = Field(
-        min_length=1
-    )
+    manipulation_resistance_examples: list[ManipulationResistanceExample] = Field(min_length=1)
     animation_profile: AnimationProfile
     world_position: WorldPosition
     schedule: list[NpcScheduleEntry] | None = None
@@ -360,9 +350,7 @@ class Item(BaseModel):
     id: str
     world_id: str
     name: str = Field(min_length=1)
-    type: Literal[
-        "weapon", "armour", "shield", "consumable", "material", "tool", "quest"
-    ]
+    type: Literal["weapon", "armour", "shield", "consumable", "material", "tool", "quest"]
     rarity: Literal["common", "uncommon", "rare", "legendary"]
     weight: float = Field(ge=0)
     value: int = Field(ge=0)
@@ -534,15 +522,9 @@ class GatheringNode(BaseModel):
         from relay.registry import SKILLS
 
         if self.skill not in SKILLS:
-            raise ValueError(
-                f"Unknown gathering skill '{self.skill}'; "
-                f"valid: {sorted(SKILLS)}"
-            )
-        if self.yield_min is not None and self.yield_max is not None:
-            if self.yield_min > self.yield_max:
-                raise ValueError(
-                    f"yield_min ({self.yield_min}) must be <= yield_max ({self.yield_max})"
-                )
+            raise ValueError(f"Unknown gathering skill '{self.skill}'; valid: {sorted(SKILLS)}")
+        if self.yield_min is not None and self.yield_max is not None and self.yield_min > self.yield_max:
+            raise ValueError(f"yield_min ({self.yield_min}) must be <= yield_max ({self.yield_max})")
         return self
 
 

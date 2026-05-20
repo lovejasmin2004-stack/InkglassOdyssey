@@ -67,9 +67,7 @@ async def load_npc(npc_id: str, world_id: str | None = None) -> NpcPersonality |
     return None
 
 
-async def _load_from_path(
-    path: Path, npc_id: str, world_id: str
-) -> NpcPersonality | None:
+async def _load_from_path(path: Path, npc_id: str, world_id: str) -> NpcPersonality | None:
     if not path.exists():
         logger.warning("NPC not found", extra={"npc_id": npc_id, "path": str(path)})
         return None
@@ -77,16 +75,12 @@ async def _load_from_path(
     try:
         data = await asyncio.to_thread(_read_and_parse, path)
     except (json.JSONDecodeError, OSError) as exc:
-        raise NpcLoadError(
-            f"NPC file {path} exists but could not be read: {exc}"
-        ) from exc
+        raise NpcLoadError(f"NPC file {path} exists but could not be read: {exc}") from exc
 
     try:
         npc = NpcPersonality.model_validate(data)
     except ValidationError as exc:
-        raise NpcLoadError(
-            f"NPC file {path} failed schema validation: {exc}"
-        ) from exc
+        raise NpcLoadError(f"NPC file {path} failed schema validation: {exc}") from exc
 
     async with _cache_lock:
         key = _cache_key(world_id, npc_id)

@@ -3,6 +3,7 @@
 Run the relay first:  uvicorn relay.main:app --port 8002
 Then:  python -m relay.tests.test_session_live 8002
 """
+
 from __future__ import annotations
 
 import asyncio

@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+
 @pytest.fixture()
 def character_id(db_client, auth_header):
     resp = db_client.post(

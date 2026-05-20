@@ -35,27 +35,27 @@ class ShopError(Exception):
     """Base for shop-specific errors."""
 
 
-class HostileFaction(ShopError):
+class HostileFactionError(ShopError):
     """The shop NPC's faction refuses to trade with this character."""
 
 
-class ItemNotInShop(ShopError):
+class ItemNotInShopError(ShopError):
     """The requested item is not in this shop's inventory."""
 
 
-class OutOfStock(ShopError):
+class OutOfStockError(ShopError):
     """The shop has zero stock of the requested item."""
 
 
-class LegendaryCannotPurchase(ShopError):
+class LegendaryCannotPurchaseError(ShopError):
     """Legendary items cannot be purchased from shops."""
 
 
-class ItemNotInInventory(ShopError):
+class ItemNotInInventoryError(ShopError):
     """The character doesn't have the item to sell."""
 
 
-class BoundItemCannotSell(ShopError):
+class BoundItemCannotSellError(ShopError):
     """Bound items cannot be sold."""
 
 
@@ -184,9 +184,7 @@ def get_shop_prices(
     return quotes
 
 
-async def _load_faction_data(
-    faction_id: str | None, world_id: str
-) -> dict[str, Any] | None:
+async def _load_faction_data(faction_id: str | None, world_id: str) -> dict[str, Any] | None:
     """Load faction definition for pricing context.
 
     Returns None if the faction cannot be resolved.
@@ -231,19 +229,19 @@ async def buy_item(
 
     Raises
     ------
-    HostileFaction
+    HostileFactionError
         If the NPC's faction is hostile to the character.
-    ItemNotInShop
+    ItemNotInShopError
         If the item isn't in this NPC's shop_data.
-    OutOfStock
+    OutOfStockError
         If the shop has zero stock.
-    LegendaryCannotPurchase
+    LegendaryCannotPurchaseError
         If the item is legendary rarity.
     InsufficientFunds
         If the character can't afford it.
     """
     if npc.shop_data is None:
-        raise ItemNotInShop(f"NPC '{npc.id}' is not a shop")
+        raise ItemNotInShopError(f"NPC '{npc.id}' is not a shop")
 
     # Load faction data for custom thresholds and price modifiers
     faction_id = _npc_faction_id(npc)
@@ -255,19 +253,19 @@ async def buy_item(
     standing = standings.get(faction_id, 0) if faction_id else 0
 
     if is_hostile(faction_standing=standing, reputation_thresholds=thresholds):
-        raise HostileFaction(f"NPC '{npc.id}' refuses to trade (hostile faction)")
+        raise HostileFactionError(f"NPC '{npc.id}' refuses to trade (hostile faction)")
 
     # Legendary cannot be purchased
     if item.rarity == "legendary":
-        raise LegendaryCannotPurchase(f"Legendary item '{item.id}' cannot be purchased")
+        raise LegendaryCannotPurchaseError(f"Legendary item '{item.id}' cannot be purchased")
 
     # Find item in shop inventory
     shop_entry = _find_shop_entry(npc, item.id)
     if shop_entry is None:
-        raise ItemNotInShop(f"Item '{item.id}' not in shop '{npc.id}'")
+        raise ItemNotInShopError(f"Item '{item.id}' not in shop '{npc.id}'")
 
     if shop_entry.stock_quantity < quantity:
-        raise OutOfStock(f"Shop has {shop_entry.stock_quantity} of '{item.id}', requested {quantity}")
+        raise OutOfStockError(f"Shop has {shop_entry.stock_quantity} of '{item.id}', requested {quantity}")
 
     # Compute price
     if thresholds:
@@ -358,11 +356,11 @@ async def sell_item(
 
     Raises
     ------
-    HostileFaction
+    HostileFactionError
         If the NPC's faction is hostile to the character.
-    ItemNotInInventory
+    ItemNotInInventoryError
         If the character doesn't have enough of the item.
-    BoundItemCannotSell
+    BoundItemCannotSellError
         If the item in inventory is bound to the character.
     """
     if npc.shop_data is None:
@@ -377,13 +375,13 @@ async def sell_item(
     standing = standings.get(faction_id, 0) if faction_id else 0
 
     if is_hostile(faction_standing=standing, reputation_thresholds=thresholds):
-        raise HostileFaction(f"NPC '{npc.id}' refuses to trade (hostile faction)")
+        raise HostileFactionError(f"NPC '{npc.id}' refuses to trade (hostile faction)")
 
     # Check character has the item (prefer unbound stacks for selling)
     inventory = list(character.inventory or [])
     inv_entry = _find_inventory_entry(inventory, item.id, prefer_unbound=True)
     if inv_entry is None or inv_entry.get("quantity", 0) < quantity:
-        raise ItemNotInInventory(f"Character does not have {quantity}x '{item.id}'")
+        raise ItemNotInInventoryError(f"Character does not have {quantity}x '{item.id}'")
 
     # Check binding
     # TODO(Phase 2): When equip endpoints are implemented, bind_on_equip items
@@ -391,7 +389,7 @@ async def sell_item(
     # below already handles that case correctly — as long as the equip logic
     # writes binding_state="bound", this guard will block selling.
     if inv_entry.get("binding_state") == "bound":
-        raise BoundItemCannotSell(f"Item '{item.id}' is bound and cannot be sold")
+        raise BoundItemCannotSellError(f"Item '{item.id}' is bound and cannot be sold")
 
     # Compute sell price
     if thresholds:
@@ -515,9 +513,7 @@ def _add_to_inventory(inventory: list[dict], item: Item, quantity: int) -> None:
     )
 
 
-def _find_inventory_entry(
-    inventory: list[dict], item_id: str, *, prefer_unbound: bool = False
-) -> dict | None:
+def _find_inventory_entry(inventory: list[dict], item_id: str, *, prefer_unbound: bool = False) -> dict | None:
     """Find an inventory entry by item_id.
 
     When prefer_unbound is True (used for selling), returns an unbound stack

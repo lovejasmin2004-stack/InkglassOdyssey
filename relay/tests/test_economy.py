@@ -40,8 +40,6 @@ from relay.schemas import (
 # ---------------------------------------------------------------------------
 
 
-
-
 @pytest.fixture()
 def character_id(db_client, auth_header):
     """Create a character with 500 gold in inkglass_dark."""
@@ -331,7 +329,7 @@ class TestShopPriceQuotes:
 
         # Simulate a character with neutral standing
         class FakeChar:
-            faction_standing = {}
+            faction_standing: dict = {}  # noqa: RUF012
 
         quotes = get_shop_prices(npc=npc, items=items, character=FakeChar())
 
@@ -1076,9 +1074,7 @@ class TestOutOfStock:
             ]
         )
         mock_load_npc.return_value = npc
-        mock_load_item.return_value = _make_item(
-            item_id="rare_gem", name="Rare Gem", rarity="rare", value=500
-        )
+        mock_load_item.return_value = _make_item(item_id="rare_gem", name="Rare Gem", rarity="rare", value=500)
 
         resp = db_client.post(
             "/shop/merchant_001/buy",
@@ -1262,7 +1258,7 @@ class TestNpcFactionIdNone:
         items = {"iron_sword": _make_item(item_id="iron_sword", value=100)}
 
         class FakeChar:
-            faction_standing = {"some_faction": 80}  # Allied with some other faction
+            faction_standing: dict = {"some_faction": 80}  # noqa: RUF012
 
         quotes = get_shop_prices(npc=npc, items=items, character=FakeChar())
         assert len(quotes) == 1
@@ -1279,16 +1275,14 @@ class TestSellBackRatioOverride:
         items = {"iron_sword": _make_item(item_id="iron_sword", value=100)}
 
         class FakeChar:
-            faction_standing = {}
+            faction_standing: dict = {}  # noqa: RUF012
 
         # Default ratio (0.50) → sell price = 50
         quotes_default = get_shop_prices(npc=npc, items=items, character=FakeChar())
         assert quotes_default[0].sell_price == 50
 
         # Custom ratio (0.70) → sell price = 70
-        quotes_custom = get_shop_prices(
-            npc=npc, items=items, character=FakeChar(), sell_back_ratio=0.70
-        )
+        quotes_custom = get_shop_prices(npc=npc, items=items, character=FakeChar(), sell_back_ratio=0.70)
         assert quotes_custom[0].sell_price == 70
 
     def test_zero_sell_back_ratio(self):
@@ -1297,7 +1291,7 @@ class TestSellBackRatioOverride:
         items = {"iron_sword": _make_item(item_id="iron_sword", value=100)}
 
         class FakeChar:
-            faction_standing = {}
+            faction_standing: dict = {}  # noqa: RUF012
 
         quotes = get_shop_prices(npc=npc, items=items, character=FakeChar(), sell_back_ratio=0.0)
         assert quotes[0].sell_price == 0

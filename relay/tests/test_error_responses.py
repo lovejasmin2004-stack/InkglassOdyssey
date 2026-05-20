@@ -14,8 +14,6 @@ from relay.auth.tokens import create_account_token, create_session_token
 from relay.main import app
 from relay.middleware.rate_limit import clear_buckets
 
-client = TestClient(app, raise_server_exceptions=False)
-
 _VALID_ERROR_KEYS = {"code", "message", "turn_id", "narrative_hint"}
 
 
@@ -24,6 +22,13 @@ def _clean_buckets():
     clear_buckets()
     yield
     clear_buckets()
+
+
+@pytest.fixture()
+def _plain_client():
+    """Client without in-memory DB — for tests that never touch the database."""
+    with TestClient(app, raise_server_exceptions=False) as c:
+        yield c
 
 
 def _account_headers(player_id: str = "err_test", tier: int = 1) -> dict[str, str]:
@@ -66,56 +71,56 @@ def _assert_error_shape(resp, expected_status: int, expected_code: str | None = 
 
 
 # ---------------------------------------------------------------------------
-# Auth errors — 401
+# Auth errors — 401  (no DB needed)
 # ---------------------------------------------------------------------------
 
 
 class TestAuthErrors:
-    def test_missing_token_returns_401(self) -> None:
-        resp = client.get("/me")
+    def test_missing_token_returns_401(self, _plain_client) -> None:
+        resp = _plain_client.get("/me")
         _assert_error_shape(resp, 401, "unauthorized")
 
-    def test_malformed_token_returns_401(self) -> None:
-        resp = client.get("/me", headers={"Authorization": "Bearer garbage"})
+    def test_malformed_token_returns_401(self, _plain_client) -> None:
+        resp = _plain_client.get("/me", headers={"Authorization": "Bearer garbage"})
         _assert_error_shape(resp, 401, "unauthorized")
 
-    def test_missing_bearer_prefix_returns_401(self) -> None:
+    def test_missing_bearer_prefix_returns_401(self, _plain_client) -> None:
         token = create_account_token(player_id="p1", tier=1)
-        resp = client.get("/me", headers={"Authorization": token})
+        resp = _plain_client.get("/me", headers={"Authorization": token})
         _assert_error_shape(resp, 401, "unauthorized")
 
-    def test_empty_bearer_returns_401(self) -> None:
-        resp = client.get("/me", headers={"Authorization": "Bearer "})
+    def test_empty_bearer_returns_401(self, _plain_client) -> None:
+        resp = _plain_client.get("/me", headers={"Authorization": "Bearer "})
         _assert_error_shape(resp, 401, "unauthorized")
 
 
 # ---------------------------------------------------------------------------
-# Not found — 404
+# Not found — 404  (DB needed — query returns empty, not crash)
 # ---------------------------------------------------------------------------
 
 
 class TestNotFoundErrors:
-    def test_character_not_found(self) -> None:
-        resp = client.get("/character/nonexistent", headers=_account_headers())
+    def test_character_not_found(self, db_client) -> None:
+        resp = db_client.get("/character/nonexistent", headers=_account_headers())
         _assert_error_shape(resp, 404, "not_found")
 
-    def test_session_not_found(self) -> None:
-        resp = client.get("/session/nonexistent/state", headers=_account_headers())
+    def test_session_not_found(self, db_client) -> None:
+        resp = db_client.get("/session/nonexistent/state", headers=_account_headers())
         _assert_error_shape(resp, 404, "not_found")
 
-    def test_scene_not_found(self) -> None:
-        resp = client.get("/scene/nonexistent", headers=_session_headers())
+    def test_scene_not_found(self, db_client) -> None:
+        resp = db_client.get("/scene/nonexistent", headers=_session_headers())
         _assert_error_shape(resp, 404, "not_found")
 
 
 # ---------------------------------------------------------------------------
-# Validation errors — 422 (malformed request bodies)
+# Validation errors — 422 (malformed request bodies, no DB needed)
 # ---------------------------------------------------------------------------
 
 
 class TestValidationErrors:
-    def test_missing_required_field_returns_422(self) -> None:
-        resp = client.post(
+    def test_missing_required_field_returns_422(self, _plain_client) -> None:
+        resp = _plain_client.post(
             "/character",
             json={"name": "Test"},
             headers=_account_headers(),
@@ -123,8 +128,8 @@ class TestValidationErrors:
         body = _assert_error_shape(resp, 422, "validation_error")
         assert "world_id" in body["message"] or "specialisation_path_id" in body["message"]
 
-    def test_wrong_type_returns_422(self) -> None:
-        resp = client.post(
+    def test_wrong_type_returns_422(self, _plain_client) -> None:
+        resp = _plain_client.post(
             "/character",
             json={
                 "world_id": 12345,
@@ -137,8 +142,8 @@ class TestValidationErrors:
         body = _assert_error_shape(resp, 422, "validation_error")
         assert "ability_scores" in body["message"]
 
-    def test_extra_forbidden_field_returns_422(self) -> None:
-        resp = client.post(
+    def test_extra_forbidden_field_returns_422(self, _plain_client) -> None:
+        resp = _plain_client.post(
             "/character",
             json={
                 "world_id": "inkglass_dark",
@@ -152,8 +157,8 @@ class TestValidationErrors:
         body = _assert_error_shape(resp, 422, "validation_error")
         assert "totally_bogus_field" in body["message"] or "extra" in body["message"].lower()
 
-    def test_empty_body_returns_422(self) -> None:
-        resp = client.post(
+    def test_empty_body_returns_422(self, _plain_client) -> None:
+        resp = _plain_client.post(
             "/session/start",
             json={},
             headers=_account_headers(),
@@ -161,8 +166,8 @@ class TestValidationErrors:
         body = _assert_error_shape(resp, 422, "validation_error")
         assert "character_id" in body["message"] or "world_id" in body["message"]
 
-    def test_invalid_json_returns_422(self) -> None:
-        resp = client.post(
+    def test_invalid_json_returns_422(self, _plain_client) -> None:
+        resp = _plain_client.post(
             "/session/start",
             content=b"not valid json{{{",
             headers={
@@ -172,8 +177,8 @@ class TestValidationErrors:
         )
         _assert_error_shape(resp, 422, "validation_error")
 
-    def test_session_start_bad_mode_returns_422(self) -> None:
-        resp = client.post(
+    def test_session_start_bad_mode_returns_422(self, _plain_client) -> None:
+        resp = _plain_client.post(
             "/session/start",
             json={
                 "character_id": "c1",
@@ -185,16 +190,16 @@ class TestValidationErrors:
         body = _assert_error_shape(resp, 422, "validation_error")
         assert "mode" in body["message"]
 
-    def test_dice_roll_missing_formula_returns_422(self) -> None:
-        resp = client.post(
+    def test_dice_roll_missing_formula_returns_422(self, _plain_client) -> None:
+        resp = _plain_client.post(
             "/dice/roll",
             json={},
             headers=_session_headers(),
         )
         _assert_error_shape(resp, 422, "validation_error")
 
-    def test_craft_negative_quantity_returns_422(self) -> None:
-        resp = client.post(
+    def test_craft_negative_quantity_returns_422(self, _plain_client) -> None:
+        resp = _plain_client.post(
             "/shop/test_npc/buy",
             json={
                 "character_id": "c1",
@@ -206,8 +211,8 @@ class TestValidationErrors:
         body = _assert_error_shape(resp, 422, "validation_error")
         assert "quantity" in body["message"]
 
-    def test_character_patch_level_out_of_range_returns_422(self) -> None:
-        resp = client.patch(
+    def test_character_patch_level_out_of_range_returns_422(self, _plain_client) -> None:
+        resp = _plain_client.patch(
             "/character/nonexistent",
             json={"level": 99},
             headers=_account_headers(),
@@ -220,13 +225,13 @@ class TestValidationErrors:
 
 
 # ---------------------------------------------------------------------------
-# Forbidden — 403
+# Forbidden — 403  (no DB needed — tier gate fires before DB lookup)
 # ---------------------------------------------------------------------------
 
 
 class TestForbiddenErrors:
-    def test_tier2_world_with_tier1_token_returns_403(self) -> None:
-        resp = client.post(
+    def test_tier2_world_with_tier1_token_returns_403(self, _plain_client) -> None:
+        resp = _plain_client.post(
             "/session/start",
             json={
                 "character_id": "c1",
@@ -239,15 +244,15 @@ class TestForbiddenErrors:
 
 
 # ---------------------------------------------------------------------------
-# Conflict — 409
+# Conflict — 409  (DB needed)
 # ---------------------------------------------------------------------------
 
 
 class TestConflictErrors:
-    def test_session_already_ended_returns_409(self) -> None:
+    def test_session_already_ended_returns_409(self, db_client) -> None:
         # Session doesn't exist, so we get 404 first — that's fine.
         # Just verify the error shape.
-        resp = client.post(
+        resp = db_client.post(
             "/session/nonexistent/end",
             json={},
             headers=_account_headers(),
@@ -261,14 +266,14 @@ class TestConflictErrors:
 
 
 class TestCatchAll:
-    def test_unhandled_exception_returns_500_with_schema(self) -> None:
+    def test_unhandled_exception_returns_500_with_schema(self, _plain_client) -> None:
         from unittest.mock import patch
 
         with patch(
             "relay.endpoints.character.select",
             side_effect=RuntimeError("simulated DB failure"),
         ):
-            resp = client.get("/character", headers=_account_headers())
+            resp = _plain_client.get("/character", headers=_account_headers())
             body = _assert_error_shape(resp, 500, "internal_error")
             assert "internal" in body["message"].lower()
             # Must NOT contain the stack trace
@@ -288,18 +293,37 @@ class TestErrorSchemaConsistency:
         "method,path,json_body,expected_status",
         [
             ("GET", "/me", None, 401),
-            ("GET", "/character/no_such_id", None, 404),
-            ("GET", "/session/no_such_id/state", None, 404),
-            ("GET", "/scene/no_such_id", None, 404),
             ("POST", "/session/start", {"character_id": "x", "world_id": "wha_au"}, 403),
         ],
     )
-    def test_error_body_shape(self, method, path, json_body, expected_status) -> None:
+    def test_error_body_shape_no_db(self, _plain_client, method, path, json_body, expected_status) -> None:
+        """Error paths that don't hit the database."""
         headers = _account_headers(tier=1) if expected_status != 401 else {}
         if method == "GET":
-            resp = client.get(path, headers=headers)
+            resp = _plain_client.get(path, headers=headers)
         else:
-            resp = client.post(path, json=json_body or {}, headers=headers)
+            resp = _plain_client.post(path, json=json_body or {}, headers=headers)
+        body = resp.json()
+        assert resp.status_code == expected_status, f"{path}: {resp.status_code}"
+        assert "code" in body, f"{path}: missing 'code'"
+        assert "message" in body, f"{path}: missing 'message'"
+        assert set(body.keys()) <= _VALID_ERROR_KEYS, f"{path}: unexpected keys {body.keys()}"
+
+    @pytest.mark.parametrize(
+        "method,path,json_body,expected_status",
+        [
+            ("GET", "/character/no_such_id", None, 404),
+            ("GET", "/session/no_such_id/state", None, 404),
+            ("GET", "/scene/no_such_id", None, 404),
+        ],
+    )
+    def test_error_body_shape_with_db(self, db_client, method, path, json_body, expected_status) -> None:
+        """Error paths that require a clean database (404 lookups)."""
+        headers = _account_headers(tier=1)
+        if method == "GET":
+            resp = db_client.get(path, headers=headers)
+        else:
+            resp = db_client.post(path, json=json_body or {}, headers=headers)
         body = resp.json()
         assert resp.status_code == expected_status, f"{path}: {resp.status_code}"
         assert "code" in body, f"{path}: missing 'code'"

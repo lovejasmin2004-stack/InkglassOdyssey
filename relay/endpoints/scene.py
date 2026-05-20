@@ -227,9 +227,7 @@ async def start_scene(
 
 @router.get("/scene/{scene_id}", response_model=SceneResponse)
 async def get_scene(scene_id: str, token: Token, db: DB) -> SceneResponse:
-    result = await db.execute(
-        select(Scene).options(selectinload(Scene.session)).where(Scene.id == scene_id)
-    )
+    result = await db.execute(select(Scene).options(selectinload(Scene.session)).where(Scene.id == scene_id))
     scene = result.scalar_one_or_none()
 
     if scene is None:
@@ -245,9 +243,7 @@ async def get_scene(scene_id: str, token: Token, db: DB) -> SceneResponse:
 
 @router.post("/scene/{scene_id}/end", response_model=SceneResponse)
 async def end_scene(scene_id: str, token: Token, db: DB) -> SceneResponse:
-    result = await db.execute(
-        select(Scene).options(selectinload(Scene.session)).where(Scene.id == scene_id)
-    )
+    result = await db.execute(select(Scene).options(selectinload(Scene.session)).where(Scene.id == scene_id))
     scene = result.scalar_one_or_none()
 
     if scene is None:
@@ -308,9 +304,7 @@ async def patch_scene(scene_id: str, body: ScenePatchRequest, token: Token, db: 
     """
     _assert_dm_or_admin(token)
 
-    result = await db.execute(
-        select(Scene).options(selectinload(Scene.session)).where(Scene.id == scene_id)
-    )
+    result = await db.execute(select(Scene).options(selectinload(Scene.session)).where(Scene.id == scene_id))
     scene = result.scalar_one_or_none()
 
     if scene is None:

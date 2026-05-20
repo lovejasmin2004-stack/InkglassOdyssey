@@ -111,9 +111,7 @@ class TestApplyResistances:
 
     def test_resistance_and_vulnerability_cancel(self) -> None:
         terms = [self._term("fire", 10)]
-        result = apply_resistances(
-            terms, resistances=["fire"], vulnerabilities=["fire"]
-        )
+        result = apply_resistances(terms, resistances=["fire"], vulnerabilities=["fire"])
         assert result[0]["applied"] == 10
         assert result[0]["category"] == "normal"
 

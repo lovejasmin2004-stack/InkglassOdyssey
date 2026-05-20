@@ -10,7 +10,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 from relay.companions.ambient import (
     compute_mood_modifier,
     find_world_event_reaction,

@@ -102,7 +102,7 @@ def add_condition(
         source_type=source_type,
         rider_of=None,
     )
-    result = list(conditions) + [parent]
+    result = [*list(conditions), parent]
 
     for rider_id in cdef.rider_conditions:
         result.append(
@@ -142,12 +142,7 @@ def remove_condition(
         return list(conditions)
 
     if instance_id is not None:
-        return [
-            c
-            for c in conditions
-            if c.get("instance_id") != instance_id
-            and c.get("rider_of") != instance_id
-        ]
+        return [c for c in conditions if c.get("instance_id") != instance_id and c.get("rider_of") != instance_id]
 
     removed_instance_ids: set[str] = set()
     result: list[ConditionInstance] = []
@@ -160,9 +155,7 @@ def remove_condition(
         result.append(c)
 
     if removed_instance_ids:
-        result = [
-            c for c in result if c.get("rider_of") not in removed_instance_ids
-        ]
+        result = [c for c in result if c.get("rider_of") not in removed_instance_ids]
 
     return result
 
@@ -259,10 +252,7 @@ def tick_conditions(
     """
     remaining: list[ConditionInstance] = []
     for cond in conditions:
-        if (
-            cond.get("expiry_turn") is not None
-            and current_turn >= cond["expiry_turn"]
-        ):
+        if cond.get("expiry_turn") is not None and current_turn >= cond["expiry_turn"]:
             logger.info(
                 "Condition expired",
                 extra={"condition_id": cond.get("condition_id")},

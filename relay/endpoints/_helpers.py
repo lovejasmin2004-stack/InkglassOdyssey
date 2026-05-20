@@ -9,13 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from relay.models import Character
 
 
-async def load_character_owned(
-    db: AsyncSession, character_id: str, player_id: str
-) -> Character:
+async def load_character_owned(db: AsyncSession, character_id: str, player_id: str) -> Character:
     """Load a character and verify ownership. Returns 404 / 403."""
-    result = await db.execute(
-        select(Character).where(Character.id == character_id)
-    )
+    result = await db.execute(select(Character).where(Character.id == character_id))
     char = result.scalar_one_or_none()
     if char is None:
         raise HTTPException(
@@ -32,9 +28,7 @@ async def load_character_owned(
 
 async def load_character_any(db: AsyncSession, character_id: str) -> Character:
     """Load a character without ownership check (NPC targets, contested checks)."""
-    result = await db.execute(
-        select(Character).where(Character.id == character_id)
-    )
+    result = await db.execute(select(Character).where(Character.id == character_id))
     char = result.scalar_one_or_none()
     if char is None:
         raise HTTPException(

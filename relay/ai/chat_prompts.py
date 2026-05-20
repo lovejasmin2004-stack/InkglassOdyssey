@@ -1,4 +1,5 @@
 """Prompt construction for quick-chat mode (no scene state, dialogue-line format)."""
+
 from __future__ import annotations
 
 from relay.schemas import NpcPersonality
@@ -7,16 +8,11 @@ from relay.schemas import NpcPersonality
 def build_quickchat_system_prompt(npc: NpcPersonality) -> str:
     """Build the system prompt for a quick-chat conversation with an NPC."""
     examples = "\n\n".join(
-        f"[{ex.context_tag}]\n"
-        f"Player: {ex.player_input}\n"
-        f"{npc.name}: {ex.npc_response}"
-        for ex in npc.few_shot_examples
+        f"[{ex.context_tag}]\nPlayer: {ex.player_input}\n{npc.name}: {ex.npc_response}" for ex in npc.few_shot_examples
     )
 
     resistance = "\n\n".join(
-        f"Player: {ex.player_input}\n"
-        f"{npc.name}: {ex.npc_refusal}"
-        for ex in npc.manipulation_resistance_examples
+        f"Player: {ex.player_input}\n{npc.name}: {ex.npc_refusal}" for ex in npc.manipulation_resistance_examples
     )
 
     goals = ", ".join(npc.goals.immediate)
