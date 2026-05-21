@@ -40,6 +40,10 @@ def should_trigger_comment(
       - "probability_X" → random chance X (0.0-1.0)
       - bare float string → treated as probability
     """
+    if trigger not in VALID_TRIGGERS:
+        logger.warning("Unknown trigger %r, valid: %s", trigger, VALID_TRIGGERS)
+        return False
+
     ambient = companion_data.get("ambient_behavior", {})
     categories = ambient.get("trigger_categories", [])
 
@@ -57,7 +61,10 @@ def _evaluate_frequency(frequency: str, turn_number: int) -> bool:
     if frequency.startswith("every_"):
         try:
             n = int(frequency.removeprefix("every_"))
-            return n > 0 and turn_number % n == 0
+            if n <= 0:
+                logger.warning("Invalid frequency %r: period must be positive", frequency)
+                return False
+            return turn_number % n == 0
         except ValueError:
             return False
 

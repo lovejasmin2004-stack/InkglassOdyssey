@@ -21,6 +21,14 @@ logger = logging.getLogger(__name__)
 DEFAULT_LOYALTY_STRAIN_THRESHOLD = 3
 DEFAULT_DISMISSAL_RELATIONSHIP_MODIFIER = -5
 
+_RELATIONSHIP_MIN = -100
+_RELATIONSHIP_MAX = 100
+
+
+def _clamp_relationship(value: int) -> int:
+    """Clamp a relationship score to [-100, 100]."""
+    return max(_RELATIONSHIP_MIN, min(_RELATIONSHIP_MAX, value))
+
 
 def handle_incapacitation(
     *,
@@ -44,7 +52,7 @@ def handle_incapacitation(
 
     modifier = companion_data.get("dismissal_relationship_modifier", DEFAULT_DISMISSAL_RELATIONSHIP_MODIFIER)
     old_relationship = relationships.get(npc_id, 0)
-    new_relationship = old_relationship + modifier
+    new_relationship = _clamp_relationship(old_relationship + modifier)
     relationships[npc_id] = new_relationship
 
     old_strain = companion.get("loyalty_strain", 0)
@@ -53,6 +61,13 @@ def handle_incapacitation(
 
     companion["hp_current"] = 0
     companion["active"] = False
+
+    confrontation = check_confrontation_threshold(companion, companion_data)
+    if confrontation:
+        logger.warning(
+            "Confrontation threshold reached",
+            extra={"npc_id": npc_id, "loyalty_strain": new_strain},
+        )
 
     logger.info(
         "Companion incapacitated",
@@ -70,7 +85,9 @@ def handle_incapacitation(
         "relationship_old": old_relationship,
         "relationship_new": new_relationship,
         "loyalty_strain": new_strain,
-        "confrontation_triggered": check_confrontation_threshold(companion, companion_data),
+        "confrontation_triggered": confrontation,
+        # TODO(phase-3): wire confrontation_scene_id to scenario system
+        "confrontation_scene_id": companion_data.get("confrontation_scene_id") if confrontation else None,
     }
 
 
@@ -115,7 +132,7 @@ def apply_dismissal(
     npc_id = companion["npc_id"]
     modifier = companion_data.get("dismissal_relationship_modifier", DEFAULT_DISMISSAL_RELATIONSHIP_MODIFIER)
     old_relationship = relationships.get(npc_id, 0)
-    new_relationship = old_relationship + modifier
+    new_relationship = _clamp_relationship(old_relationship + modifier)
     relationships[npc_id] = new_relationship
 
     logger.info(

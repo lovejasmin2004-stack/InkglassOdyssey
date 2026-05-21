@@ -97,11 +97,18 @@ def add_companion(
     return companions
 
 
-def remove_companion(companions: list[dict], npc_id: str) -> list[dict]:
-    """Remove a companion by npc_id. Returns updated list."""
+def remove_companion(companions: list[dict], npc_id: str) -> tuple[list[dict], bool]:
+    """Remove a companion by npc_id.
+
+    Returns (updated_list, was_removed).
+    """
     result = [c for c in companions if c["npc_id"] != npc_id]
-    logger.info("Companion removed", extra={"npc_id": npc_id})
-    return result
+    removed = len(result) < len(companions)
+    if not removed:
+        logger.warning("Attempted to remove companion not in list", extra={"npc_id": npc_id})
+    else:
+        logger.info("Companion removed", extra={"npc_id": npc_id})
+    return result, removed
 
 
 def find_companion(companions: list[dict], npc_id: str) -> dict | None:

@@ -1,22 +1,24 @@
 """Tests for the companion system.
 
 Covers: recruitment validation, combat AI, loyalty strain, incapacitation,
-ambient behaviour, dismissal, and endpoint integration.
+ambient behaviour, dismissal, rate limiting, and endpoint integration.
 """
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from relay.companions.ambient import (
+    VALID_TRIGGERS,
     compute_mood_modifier,
     find_world_event_reaction,
     should_trigger_comment,
 )
 from relay.companions.combat_ai import apply_directive, resolve_companion_action
 from relay.companions.loyalty import (
+    _RELATIONSHIP_MIN,
     apply_dismissal,
     check_confrontation_threshold,
     clear_exhaustion_on_rest,
@@ -36,10 +38,10 @@ from relay.companions.manager import (
 )
 
 # ---------------------------------------------------------------------------
-# Shared test data
+# Shared test data (dict form — matches model_dump() output of CompanionData)
 # ---------------------------------------------------------------------------
 
-COMPANION_DATA = {
+COMPANION_DATA: dict = {
     "recruitment": {
         "affection_threshold": 50,
         "recruitment_scenario_id": "recruit_kaelen",
@@ -47,7 +49,10 @@ COMPANION_DATA = {
     },
     "combat_profile": {
         "behavior_type": "aggressive",
-        "abilities": ["slash", "cleave"],
+        "abilities": [
+            {"name": "slash", "damage_dice": "1d8"},
+            {"name": "cleave", "damage_dice": "2d6"},
+        ],
         "directive_vocabulary": {
             "stay back": "defensive",
             "focus the caster": "aggressive",
@@ -63,6 +68,7 @@ COMPANION_DATA = {
     "dismissal_relationship_modifier": -10,
     "farewell_template": "farewell_kaelen",
     "reunion_template": "reunion_kaelen",
+    "confrontation_scene_id": None,
     "world_event_reactions": [
         {"event_id": "dragon_attack", "comment": "We should flee!", "relationship_modifier": -2},
     ],
@@ -186,9 +192,16 @@ class TestCompanionList:
 
     def test_remove_companion(self):
         companions = [{"npc_id": "kaelen"}, {"npc_id": "other"}]
-        result = remove_companion(companions, "kaelen")
+        result, removed = remove_companion(companions, "kaelen")
         assert len(result) == 1
         assert result[0]["npc_id"] == "other"
+        assert removed is True
+
+    def test_remove_companion_not_found(self):
+        companions = [{"npc_id": "other"}]
+        result, removed = remove_companion(companions, "kaelen")
+        assert len(result) == 1
+        assert removed is False
 
     def test_find_companion(self):
         companions = [{"npc_id": "kaelen"}, {"npc_id": "other"}]
@@ -273,7 +286,16 @@ class TestCombatAI:
 
     def test_supportive_heals_lowest_hp(self):
         companion = {"npc_id": "healer", "hp_current": 30, "behavior_type": "supportive", "active": True}
-        data = {**COMPANION_DATA, "combat_profile": {"behavior_type": "supportive", "abilities": ["heal", "bless"]}}
+        data = {
+            **COMPANION_DATA,
+            "combat_profile": {
+                "behavior_type": "supportive",
+                "abilities": [
+                    {"name": "heal", "healing_dice": "1d8"},
+                    {"name": "bless"},
+                ],
+            },
+        }
         data["ability_scores"] = {"wisdom": 16, "strength": 10}
         allies = [
             {"id": "player_1", "hp_current": 20, "hp_max": 40},
@@ -318,6 +340,26 @@ class TestCombatAI:
         assert action["action_type"] == "none"
         assert action["reason"] == "companion_incapacitated"
 
+    def test_invalid_damage_dice_falls_back(self):
+        """Malformed damage_dice is skipped; falls back to 1d6."""
+        companion = {"npc_id": "kaelen", "hp_current": 30, "behavior_type": "aggressive", "active": True}
+        target = {"id": "goblin_1", "ac": 5, "hp_current": 15, "ability_scores": {}, "level": 1}
+        data = {
+            **COMPANION_DATA,
+            "combat_profile": {
+                "behavior_type": "aggressive",
+                "abilities": [
+                    {"name": "bad_attack", "damage_dice": "fire"},
+                    {"name": "another_bad", "damage_dice": "d"},
+                ],
+            },
+        }
+
+        with patch("random.randint", side_effect=[20, 4, 3]):
+            action = resolve_companion_action(companion=companion, companion_data=data, target=target)
+        assert action["hit"] is True
+        assert action["damage"] >= 0
+
 
 class TestDirective:
     def test_apply_known_directive(self):
@@ -360,6 +402,7 @@ class TestIncapacitation:
         assert companion["hp_current"] == 0
         assert relationships["kaelen"] == 50  # 60 + (-10)
         assert result["confrontation_triggered"] is False
+        assert result["confrontation_scene_id"] is None
 
     def test_incapacitation_triggers_confrontation(self):
         companion = {"npc_id": "kaelen", "hp_current": 0, "exhaustion_level": 1, "loyalty_strain": 2, "active": True}
@@ -395,6 +438,18 @@ class TestIncapacitation:
             relationships=relationships,
         )
         assert relationships["kaelen"] == 0  # 10 + (-10)
+
+    def test_relationship_clamped_at_min(self):
+        """Repeated incapacitation can't push relationship below -100."""
+        companion = {"npc_id": "kaelen", "hp_current": 0, "exhaustion_level": 0, "loyalty_strain": 0, "active": True}
+        relationships = {"kaelen": -95}
+
+        handle_incapacitation(
+            companion=companion,
+            companion_data=COMPANION_DATA,
+            relationships=relationships,
+        )
+        assert relationships["kaelen"] == _RELATIONSHIP_MIN  # -100, not -105
 
 
 class TestConfrontation:
@@ -452,6 +507,19 @@ class TestDismissal:
         assert result["relationship_old"] == 60
         assert result["relationship_new"] == 50
 
+    def test_dismissal_relationship_clamped(self):
+        """Dismissal modifier can't push relationship below -100."""
+        companion = {"npc_id": "kaelen"}
+        relationships = {"kaelen": -96}
+
+        result = apply_dismissal(
+            companion=companion,
+            companion_data=COMPANION_DATA,
+            relationships=relationships,
+        )
+        assert result["relationship_new"] == _RELATIONSHIP_MIN  # -100
+        assert relationships["kaelen"] == _RELATIONSHIP_MIN
+
 
 # ===========================================================================
 # Unit tests — ambient.py
@@ -482,6 +550,7 @@ class TestAmbientTrigger:
             )
 
     def test_non_matching_trigger(self):
+        """player_idle is valid but not in this NPC's categories."""
         assert (
             should_trigger_comment(
                 trigger="player_idle",
@@ -502,6 +571,34 @@ class TestAmbientTrigger:
         assert should_trigger_comment(trigger="new_region", companion_data=data, turn_number=3) is True
         assert should_trigger_comment(trigger="new_region", companion_data=data, turn_number=4) is False
         assert should_trigger_comment(trigger="new_region", companion_data=data, turn_number=6) is True
+
+    def test_invalid_trigger_rejected(self):
+        """Triggers not in VALID_TRIGGERS are rejected."""
+        assert (
+            should_trigger_comment(
+                trigger="nonexistent_event",
+                companion_data=COMPANION_DATA,
+                turn_number=1,
+            )
+            is False
+        )
+
+    def test_all_valid_triggers_accepted(self):
+        """All known triggers pass the valid-trigger check (may still fail category)."""
+        for trigger in VALID_TRIGGERS:
+            # Not in categories → False, but should not log "unknown trigger"
+            should_trigger_comment(trigger=trigger, companion_data=COMPANION_DATA, turn_number=1)
+
+    def test_every_zero_returns_false(self):
+        """every_0 is a nonsensical frequency — returns False."""
+        data = {
+            **COMPANION_DATA,
+            "ambient_behavior": {
+                "comment_frequency": "every_0",
+                "trigger_categories": ["new_region"],
+            },
+        }
+        assert should_trigger_comment(trigger="new_region", companion_data=data, turn_number=1) is False
 
 
 class TestMoodModifier:
@@ -557,6 +654,24 @@ class TestWorldEventReaction:
 # ===========================================================================
 
 
+def _mock_load_npc(npc=None):
+    """Patch load_npc so endpoints resolve NPC data without disk I/O."""
+    if npc is None:
+        from relay.tests.conftest import make_companion_npc
+
+        npc = make_companion_npc()
+    return patch("relay.ai.npc_loader.load_npc", new_callable=AsyncMock, return_value=npc)
+
+
+def _mock_world_config(max_companions: int = 1):
+    """Patch get_max_active_companions to return a fixed companion limit."""
+    return patch(
+        "relay.endpoints._helpers.get_max_active_companions",
+        new_callable=AsyncMock,
+        return_value=max_companions,
+    )
+
+
 @pytest.fixture()
 def character_id(db_client, auth_header, session_header):
     resp = db_client.post(
@@ -589,19 +704,37 @@ def character_id(db_client, auth_header, session_header):
     return cid
 
 
-class TestRecruitEndpoint:
-    def test_recruit_companion(self, db_client, session_header, character_id):
-        resp = db_client.post(
+def _recruit(db_client, session_header, character_id, *, npc_id="kaelen"):
+    """Helper to recruit a companion through the endpoint with mocked NPC loading."""
+    from relay.tests.conftest import make_companion_npc
+
+    npc = make_companion_npc(npc_id=npc_id, affection_threshold=10, recruitment_conditions=[])
+    with _mock_load_npc(npc), _mock_world_config():
+        return db_client.post(
             "/companions/recruit",
             json={
                 "character_id": character_id,
-                "npc_id": "kaelen",
-                "companion_data": COMPANION_DATA,
-                "npc_hp_max": 45,
-                "world_flags": {"quest_complete_forest": True},
+                "npc_id": npc_id,
             },
             headers=session_header,
         )
+
+
+class TestRecruitEndpoint:
+    def test_recruit_companion(self, db_client, session_header, character_id):
+        from relay.tests.conftest import make_companion_npc
+
+        npc = make_companion_npc()
+        with _mock_load_npc(npc), _mock_world_config():
+            resp = db_client.post(
+                "/companions/recruit",
+                json={
+                    "character_id": character_id,
+                    "npc_id": "kaelen",
+                    "world_flags": {"quest_complete_forest": True},
+                },
+                headers=session_header,
+            )
         assert resp.status_code == 200
         data = resp.json()
         assert data["recruited"] is True
@@ -610,48 +743,42 @@ class TestRecruitEndpoint:
         assert data["companion_state"]["behavior_type"] == "aggressive"
 
     def test_recruit_affection_too_low(self, db_client, session_header, character_id):
+        from relay.tests.conftest import make_companion_npc
+
         db_client.patch(
             f"/character/{character_id}",
             json={"relationships": {"kaelen": 10}},
             headers=session_header,
         )
-        resp = db_client.post(
-            "/companions/recruit",
-            json={
-                "character_id": character_id,
-                "npc_id": "kaelen",
-                "companion_data": COMPANION_DATA,
-                "npc_hp_max": 45,
-                "world_flags": {"quest_complete_forest": True},
-            },
-            headers=session_header,
-        )
+        npc = make_companion_npc()  # threshold=50, but relationship=10
+        with _mock_load_npc(npc), _mock_world_config():
+            resp = db_client.post(
+                "/companions/recruit",
+                json={
+                    "character_id": character_id,
+                    "npc_id": "kaelen",
+                    "world_flags": {"quest_complete_forest": True},
+                },
+                headers=session_header,
+            )
         assert resp.status_code == 400
         assert resp.json()["code"] == "affection_too_low"
 
     def test_recruit_duplicate(self, db_client, session_header, character_id):
-        db_client.post(
-            "/companions/recruit",
-            json={
-                "character_id": character_id,
-                "npc_id": "kaelen",
-                "companion_data": COMPANION_DATA,
-                "npc_hp_max": 45,
-                "world_flags": {"quest_complete_forest": True},
-            },
-            headers=session_header,
-        )
-        resp = db_client.post(
-            "/companions/recruit",
-            json={
-                "character_id": character_id,
-                "npc_id": "kaelen",
-                "companion_data": COMPANION_DATA,
-                "npc_hp_max": 45,
-                "world_flags": {"quest_complete_forest": True},
-            },
-            headers=session_header,
-        )
+        _recruit(db_client, session_header, character_id)
+
+        from relay.tests.conftest import make_companion_npc
+
+        npc = make_companion_npc(affection_threshold=10, recruitment_conditions=[])
+        with _mock_load_npc(npc), _mock_world_config():
+            resp = db_client.post(
+                "/companions/recruit",
+                json={
+                    "character_id": character_id,
+                    "npc_id": "kaelen",
+                },
+                headers=session_header,
+            )
         assert resp.status_code == 409
         assert resp.json()["code"] == "already_recruited"
 
@@ -661,75 +788,50 @@ class TestRecruitEndpoint:
             json={"relationships": {"kaelen": 60, "other_npc": 60}},
             headers=session_header,
         )
-        data_no_conditions = {
-            **COMPANION_DATA,
-            "recruitment": {"affection_threshold": 10, "recruitment_scenario_id": "test"},
-        }
-        db_client.post(
-            "/companions/recruit",
-            json={
-                "character_id": character_id,
-                "npc_id": "kaelen",
-                "companion_data": data_no_conditions,
-                "npc_hp_max": 45,
-            },
-            headers=session_header,
-        )
-        resp = db_client.post(
-            "/companions/recruit",
-            json={
-                "character_id": character_id,
-                "npc_id": "other_npc",
-                "companion_data": data_no_conditions,
-                "npc_hp_max": 30,
-                "max_active_companions": 1,
-            },
-            headers=session_header,
-        )
+        _recruit(db_client, session_header, character_id, npc_id="kaelen")
+
+        from relay.tests.conftest import make_companion_npc
+
+        npc = make_companion_npc(npc_id="other_npc", affection_threshold=10, recruitment_conditions=[])
+        with _mock_load_npc(npc), _mock_world_config(max_companions=1):
+            resp = db_client.post(
+                "/companions/recruit",
+                json={
+                    "character_id": character_id,
+                    "npc_id": "other_npc",
+                },
+                headers=session_header,
+            )
         assert resp.status_code == 409
         assert resp.json()["code"] == "companion_limit"
 
     def test_recruit_character_not_found(self, db_client, session_header):
-        resp = db_client.post(
-            "/companions/recruit",
-            json={
-                "character_id": "nonexistent",
-                "npc_id": "kaelen",
-                "companion_data": COMPANION_DATA,
-                "npc_hp_max": 45,
-            },
-            headers=session_header,
-        )
+        from relay.tests.conftest import make_companion_npc
+
+        with _mock_load_npc(make_companion_npc()), _mock_world_config():
+            resp = db_client.post(
+                "/companions/recruit",
+                json={
+                    "character_id": "nonexistent",
+                    "npc_id": "kaelen",
+                },
+                headers=session_header,
+            )
         assert resp.status_code == 404
 
 
 class TestCombatActionEndpoint:
-    def _recruit(self, db_client, session_header, character_id):
-        data_no_conditions = {
-            **COMPANION_DATA,
-            "recruitment": {"affection_threshold": 10, "recruitment_scenario_id": "test"},
-        }
-        db_client.post(
-            "/companions/recruit",
-            json={
-                "character_id": character_id,
-                "npc_id": "kaelen",
-                "companion_data": data_no_conditions,
-                "npc_hp_max": 45,
-            },
-            headers=session_header,
-        )
-
     def test_combat_action_attack(self, db_client, session_header, character_id):
-        self._recruit(db_client, session_header, character_id)
+        _recruit(db_client, session_header, character_id)
         target = {"id": "goblin_1", "ac": 10, "hp_current": 15, "ability_scores": {}, "level": 1}
 
-        with patch("random.randint", side_effect=[15, 4]):
+        from relay.tests.conftest import make_companion_npc
+
+        with _mock_load_npc(make_companion_npc()), patch("random.randint", side_effect=[15, 4]):
             resp = db_client.post(
                 "/companions/kaelen/combat-action",
                 json={
                     "character_id": character_id,
-                    "companion_data": COMPANION_DATA,
                     "target": target,
                 },
                 headers=session_header,
@@ -740,45 +842,31 @@ class TestCombatActionEndpoint:
         assert action["hit"] is True
 
     def test_combat_action_companion_not_found(self, db_client, session_header, character_id):
-        resp = db_client.post(
-            "/companions/nonexistent/combat-action",
-            json={
-                "character_id": character_id,
-                "companion_data": COMPANION_DATA,
-            },
-            headers=session_header,
-        )
+        from relay.tests.conftest import make_companion_npc
+
+        with _mock_load_npc(make_companion_npc(npc_id="nonexistent")):
+            resp = db_client.post(
+                "/companions/nonexistent/combat-action",
+                json={
+                    "character_id": character_id,
+                },
+                headers=session_header,
+            )
         assert resp.status_code == 404
 
 
 class TestIncapacitateEndpoint:
-    def _recruit(self, db_client, session_header, character_id):
-        data_no_conditions = {
-            **COMPANION_DATA,
-            "recruitment": {"affection_threshold": 10, "recruitment_scenario_id": "test"},
-        }
-        db_client.post(
-            "/companions/recruit",
-            json={
-                "character_id": character_id,
-                "npc_id": "kaelen",
-                "companion_data": data_no_conditions,
-                "npc_hp_max": 45,
-            },
-            headers=session_header,
-        )
-
     def test_incapacitate_companion(self, db_client, session_header, character_id):
-        self._recruit(db_client, session_header, character_id)
+        _recruit(db_client, session_header, character_id)
 
-        resp = db_client.post(
-            "/companions/kaelen/incapacitate",
-            json={
-                "character_id": character_id,
-                "companion_data": COMPANION_DATA,
-            },
-            headers=session_header,
-        )
+        from relay.tests.conftest import make_companion_npc
+
+        with _mock_load_npc(make_companion_npc()):
+            resp = db_client.post(
+                "/companions/kaelen/incapacitate",
+                json={"character_id": character_id},
+                headers=session_header,
+            )
         assert resp.status_code == 200
         result = resp.json()["result"]
         assert result["exhaustion_level"] == 1
@@ -787,38 +875,46 @@ class TestIncapacitateEndpoint:
         assert result["confrontation_triggered"] is False
 
     def test_incapacitate_increments_strain(self, db_client, session_header, character_id):
-        self._recruit(db_client, session_header, character_id)
+        _recruit(db_client, session_header, character_id)
 
+        from relay.tests.conftest import make_companion_npc
+
+        npc = make_companion_npc()
         for _ in range(2):
-            db_client.post(
-                "/companions/kaelen/incapacitate",
-                json={"character_id": character_id, "companion_data": COMPANION_DATA},
-                headers=session_header,
-            )
-            db_client.post(
-                "/companions/kaelen/recover",
-                json={"character_id": character_id, "companion_data": COMPANION_DATA},
-                headers=session_header,
-            )
+            with _mock_load_npc(npc):
+                db_client.post(
+                    "/companions/kaelen/incapacitate",
+                    json={"character_id": character_id},
+                    headers=session_header,
+                )
+                db_client.post(
+                    "/companions/kaelen/recover",
+                    json={"character_id": character_id},
+                    headers=session_header,
+                )
 
-        resp = db_client.post(
-            "/companions/kaelen/incapacitate",
-            json={"character_id": character_id, "companion_data": COMPANION_DATA},
-            headers=session_header,
-        )
+        with _mock_load_npc(npc):
+            resp = db_client.post(
+                "/companions/kaelen/incapacitate",
+                json={"character_id": character_id},
+                headers=session_header,
+            )
         assert resp.status_code == 200
         result = resp.json()["result"]
         assert result["loyalty_strain"] == 3
         assert result["confrontation_triggered"] is True
 
     def test_incapacitate_persists_state(self, db_client, session_header, character_id):
-        self._recruit(db_client, session_header, character_id)
+        _recruit(db_client, session_header, character_id)
 
-        db_client.post(
-            "/companions/kaelen/incapacitate",
-            json={"character_id": character_id, "companion_data": COMPANION_DATA},
-            headers=session_header,
-        )
+        from relay.tests.conftest import make_companion_npc
+
+        with _mock_load_npc(make_companion_npc()):
+            db_client.post(
+                "/companions/kaelen/incapacitate",
+                json={"character_id": character_id},
+                headers=session_header,
+            )
 
         resp = db_client.get(
             f"/companions/{character_id}",
@@ -832,34 +928,112 @@ class TestIncapacitateEndpoint:
         assert kaelen["loyalty_strain"] == 1
 
 
-class TestDismissEndpoint:
-    def _recruit(self, db_client, session_header, character_id):
-        data_no_conditions = {
-            **COMPANION_DATA,
-            "recruitment": {"affection_threshold": 10, "recruitment_scenario_id": "test"},
-        }
-        db_client.post(
-            "/companions/recruit",
-            json={
-                "character_id": character_id,
-                "npc_id": "kaelen",
-                "companion_data": data_no_conditions,
-                "npc_hp_max": 45,
-            },
-            headers=session_header,
-        )
+class TestRecoverEndpoint:
+    def test_recover_companion(self, db_client, session_header, character_id):
+        _recruit(db_client, session_header, character_id)
 
-    def test_dismiss_companion(self, db_client, session_header, character_id):
-        self._recruit(db_client, session_header, character_id)
+        from relay.tests.conftest import make_companion_npc
+
+        npc = make_companion_npc()
+        with _mock_load_npc(npc):
+            db_client.post(
+                "/companions/kaelen/incapacitate",
+                json={"character_id": character_id},
+                headers=session_header,
+            )
 
         resp = db_client.post(
-            "/companions/kaelen/dismiss",
-            json={
-                "character_id": character_id,
-                "companion_data": COMPANION_DATA,
-            },
+            "/companions/kaelen/recover",
+            json={"character_id": character_id},
             headers=session_header,
         )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["recovered"] is True
+        assert data["companion_state"]["active"] is True
+        assert data["companion_state"]["hp_current"] == 45
+
+
+class TestRestEndpoint:
+    def test_rest_clears_exhaustion(self, db_client, session_header, character_id):
+        _recruit(db_client, session_header, character_id)
+
+        from relay.tests.conftest import make_companion_npc
+
+        npc = make_companion_npc()
+        with _mock_load_npc(npc):
+            db_client.post(
+                "/companions/kaelen/incapacitate",
+                json={"character_id": character_id},
+                headers=session_header,
+            )
+            db_client.post(
+                "/companions/kaelen/recover",
+                json={"character_id": character_id},
+                headers=session_header,
+            )
+
+        resp = db_client.post(
+            "/companions/kaelen/rest",
+            json={"character_id": character_id},
+            headers=session_header,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["exhaustion_level"] == 0
+
+
+class TestDirectiveEndpoint:
+    def test_directive_changes_behavior(self, db_client, session_header, character_id):
+        _recruit(db_client, session_header, character_id)
+
+        from relay.tests.conftest import make_companion_npc
+
+        with _mock_load_npc(make_companion_npc()):
+            resp = db_client.post(
+                "/companions/kaelen/directive",
+                json={
+                    "character_id": character_id,
+                    "directive": "stay back",
+                },
+                headers=session_header,
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["old_behavior"] == "aggressive"
+        assert data["new_behavior"] == "defensive"
+
+    def test_unknown_directive_no_change(self, db_client, session_header, character_id):
+        _recruit(db_client, session_header, character_id)
+
+        from relay.tests.conftest import make_companion_npc
+
+        with _mock_load_npc(make_companion_npc()):
+            resp = db_client.post(
+                "/companions/kaelen/directive",
+                json={
+                    "character_id": character_id,
+                    "directive": "do a backflip",
+                },
+                headers=session_header,
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["old_behavior"] == "aggressive"
+        assert data["new_behavior"] == "aggressive"
+
+
+class TestDismissEndpoint:
+    def test_dismiss_companion(self, db_client, session_header, character_id):
+        _recruit(db_client, session_header, character_id)
+
+        from relay.tests.conftest import make_companion_npc
+
+        with _mock_load_npc(make_companion_npc()):
+            resp = db_client.post(
+                "/companions/kaelen/dismiss",
+                json={"character_id": character_id},
+                headers=session_header,
+            )
         assert resp.status_code == 200
         result = resp.json()["result"]
         assert result["farewell_template"] == "farewell_kaelen"
@@ -882,20 +1056,7 @@ class TestGetCompanionsEndpoint:
         assert resp.json()["companions"] == []
 
     def test_get_companions_after_recruit(self, db_client, session_header, character_id):
-        data_no_conditions = {
-            **COMPANION_DATA,
-            "recruitment": {"affection_threshold": 10, "recruitment_scenario_id": "test"},
-        }
-        db_client.post(
-            "/companions/recruit",
-            json={
-                "character_id": character_id,
-                "npc_id": "kaelen",
-                "companion_data": data_no_conditions,
-                "npc_hp_max": 45,
-            },
-            headers=session_header,
-        )
+        _recruit(db_client, session_header, character_id)
 
         resp = db_client.get(
             f"/companions/{character_id}",
@@ -908,3 +1069,37 @@ class TestGetCompanionsEndpoint:
         assert companions[0]["hp_current"] == 45
         assert companions[0]["behavior_type"] == "aggressive"
         assert companions[0]["active"] is True
+
+
+class TestCompanionRateLimiting:
+    def test_rate_limit_triggers(self, db_client, session_header, character_id):
+        """After 15 mutations within 60s, the 16th is rejected with 429."""
+        from relay.endpoints.companion import _COMPANION_CHANGE_MAX, clear_companion_rate_limits
+
+        clear_companion_rate_limits()
+        _recruit(db_client, session_header, character_id)
+
+        from relay.tests.conftest import make_companion_npc
+
+        npc = make_companion_npc()
+        # Each recover is 1 rate-limit hit. The recruit above was 1.
+        # Do enough recover calls to hit the limit.
+        remaining = _COMPANION_CHANGE_MAX - 1  # recruit already used 1
+        for _ in range(remaining):
+            with _mock_load_npc(npc):
+                resp = db_client.post(
+                    "/companions/kaelen/recover",
+                    json={"character_id": character_id},
+                    headers=session_header,
+                )
+                assert resp.status_code == 200
+
+        # The next call should be rate-limited
+        with _mock_load_npc(npc):
+            resp = db_client.post(
+                "/companions/kaelen/recover",
+                json={"character_id": character_id},
+                headers=session_header,
+            )
+        assert resp.status_code == 429
+        assert resp.json()["code"] == "companion_rate_limited"

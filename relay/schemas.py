@@ -233,9 +233,17 @@ class CompanionRecruitment(BaseModel):
     recruitment_conditions: list[str] | None = None
 
 
+class CompanionAbility(BaseModel):
+    """A single companion combat ability with optional dice formulas."""
+
+    name: str = Field(min_length=1)
+    damage_dice: DiceFormulaStr | None = None
+    healing_dice: DiceFormulaStr | None = None
+
+
 class CompanionCombatProfile(BaseModel):
     behavior_type: Literal["aggressive", "supportive", "defensive"]
-    abilities: list[str] = Field(min_length=2, max_length=3)
+    abilities: list[CompanionAbility] = Field(min_length=2, max_length=3)
     directive_vocabulary: dict[str, str] | None = None
 
 
@@ -246,14 +254,15 @@ class CompanionAmbientBehavior(BaseModel):
 
 
 class CompanionData(BaseModel):
-    recruitment: CompanionRecruitment
+    recruitment: CompanionRecruitment  # TODO(phase-3): wire recruitment_scenario_id to scenario endpoint
     combat_profile: CompanionCombatProfile
     ambient_behavior: CompanionAmbientBehavior
     loyalty_strain_threshold: int
     world_event_reactions: list[dict] | None = None
     farewell_template: str | None = None
-    reunion_template: str | None = None
+    reunion_template: str | None = None  # TODO(phase-4): implement reunion mechanism
     dismissal_relationship_modifier: int | None = None
+    confrontation_scene_id: str | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -245,7 +245,21 @@
               "type": "string",
               "enum": ["aggressive", "supportive", "defensive"]
             },
-            "abilities":           { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 3 },
+            "abilities": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 3,
+              "items": {
+                "type": "object",
+                "required": ["name"],
+                "additionalProperties": false,
+                "properties": {
+                  "name":         { "type": "string", "minLength": 1 },
+                  "damage_dice":  { "type": "string", "pattern": "^\\d+d\\d+([+-]\\d+)?$|^[+-]?\\d+$" },
+                  "healing_dice": { "type": "string", "pattern": "^\\d+d\\d+([+-]\\d+)?$|^[+-]?\\d+$" }
+                }
+              }
+            },
             "directive_vocabulary": { "type": "object", "additionalProperties": { "type": "string" } }
           }
         },
@@ -263,7 +277,8 @@
         "world_event_reactions":        { "type": "array", "items": { "type": "object" } },
         "farewell_template":            { "type": "string" },
         "reunion_template":             { "type": "string" },
-        "dismissal_relationship_modifier": { "type": "integer" }
+        "dismissal_relationship_modifier": { "type": "integer" },
+        "confrontation_scene_id":       { "type": "string" }
       }
     }
   }
