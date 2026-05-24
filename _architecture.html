@@ -1,0 +1,1117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inkglass Odyssey — System Architecture</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0e1117;
+  --surface: #161b22;
+  --surface2: #1c2129;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text2: #8b949e;
+  --accent: #7c6af0;
+  --accent2: #58a6ff;
+  --green: #3fb950;
+  --orange: #d29922;
+  --red: #f85149;
+  --pink: #db61a2;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.layout { display: flex; height: 100vh; overflow: hidden; }
+
+.diagram-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.topbar {
+  padding: 0.6rem 1.5rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-shrink: 0;
+}
+.topbar h1 { font-size: 1.1rem; font-weight: 600; }
+.topbar .subtitle { color: var(--text2); font-size: 0.85rem; }
+.topbar .hint { margin-left: auto; color: var(--text2); font-size: 0.8rem; }
+
+.zoom-controls {
+  display: flex;
+  gap: 0.25rem;
+  margin-left: 1rem;
+}
+.zoom-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+.zoom-btn:hover { background: var(--border); }
+.zoom-level { color: var(--text2); font-size: 0.8rem; line-height: 1.8; min-width: 3rem; text-align: center; }
+
+.diagram-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 1rem;
+}
+
+.diagram-wrapper {
+  transform-origin: 0 0;
+  transition: transform 0.15s ease;
+}
+
+.mermaid svg {
+  cursor: grab;
+}
+
+/* Make edges visible on dark background */
+.edgePaths path[data-edge] {
+  stroke: #58a6ff !important;
+  stroke-width: 2px !important;
+  stroke-opacity: 0.65 !important;
+}
+.edgeLabel .label-container {
+  fill: var(--surface) !important;
+}
+
+.legend {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 1.5rem;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  font-size: 0.78rem;
+  color: var(--text2);
+  flex-shrink: 0;
+}
+.legend-item { display: flex; align-items: center; gap: 0.35rem; }
+.legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+
+/* Detail panel */
+.detail-panel {
+  width: 380px;
+  min-width: 380px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  transition: min-width 0.15s, width 0.15s;
+}
+.detail-panel.collapsed { width: 0; min-width: 0; border: 0; overflow: hidden; }
+
+.panel-header {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+.panel-header h2 { font-size: 1rem; font-weight: 600; margin-bottom: 0.25rem; }
+.panel-header .desc { color: var(--text2); font-size: 0.85rem; line-height: 1.5; }
+
+.panel-body { padding: 1rem 1.25rem; }
+
+.component-list { list-style: none; }
+.component-list li {
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.component-list li:last-child { border-bottom: none; }
+.comp-name { font-weight: 600; font-size: 0.85rem; color: var(--accent2); }
+.comp-desc { font-size: 0.8rem; color: var(--text2); margin-top: 0.1rem; }
+
+.info-box {
+  margin-top: 0.75rem;
+  padding: 0.7rem;
+  background: var(--surface2);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.info-box h4 {
+  font-size: 0.75rem;
+  color: var(--text2);
+  margin-bottom: 0.4rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.info-box code {
+  display: block;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 0.8rem;
+  color: var(--green);
+  padding: 0.1rem 0;
+}
+.flow-item {
+  font-size: 0.8rem;
+  padding: 0.15rem 0;
+  color: var(--text);
+}
+.flow-arrow { color: var(--orange); font-weight: 600; margin-right: 0.3rem; }
+
+.empty-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text2);
+  font-size: 0.9rem;
+  padding: 2rem;
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* Highlight clicked node */
+.node.selected rect, .node.selected .label-container {
+  stroke: var(--accent) !important;
+  stroke-width: 3px !important;
+}
+</style>
+</head>
+<body>
+
+<div class="layout">
+  <div class="diagram-area">
+    <div class="topbar">
+      <h1>Inkglass Odyssey</h1>
+      <span class="subtitle">System Architecture</span>
+      <div class="zoom-controls">
+        <button class="zoom-btn" onclick="zoomDiagram(-0.1)">-</button>
+        <span class="zoom-level" id="zoom-label">100%</span>
+        <button class="zoom-btn" onclick="zoomDiagram(0.1)">+</button>
+        <button class="zoom-btn" onclick="zoomDiagram(0, true)">Fit</button>
+      </div>
+      <span class="hint">Click any box to see details</span>
+    </div>
+    <div class="diagram-scroll" id="diagram-scroll">
+      <div class="diagram-wrapper" id="diagram-wrapper">
+        <pre class="mermaid">
+%%{init: {'theme':'dark', 'themeVariables': {'fontSize':'14px', 'fontFamily': 'system-ui, sans-serif'}, 'flowchart': {'curve':'basis','useMaxWidth':false,'htmlLabels':true,'nodeSpacing':30,'rankSpacing':40}}}%%
+
+flowchart TB
+  CLIENT(["Unity Client / Browser"])
+
+  subgraph GATEWAY [" Gateway "]
+    AUTH["Auth &amp; Tokens"]
+    RATELIMIT["Rate Limiter"]
+  end
+
+  subgraph LIFECYCLE [" Session Lifecycle "]
+    SESSIONS["Session Manager"]
+    SCENES["Scene Manager"]
+    RECOVERY["Turn Recovery"]
+  end
+
+  subgraph CHARACTERS [" Characters "]
+    CHARCRUD["Character CRUD"]
+    PROGRESSION["Levelling"]
+  end
+
+  subgraph DIALOGUE [" NPC Dialogue Engine "]
+    WEBSOCKET["WebSocket Protocol"]
+    PROMPTS["Prompt Builder"]
+    NPCLOADER["NPC Loader"]
+    STREAMING["LLM Streaming"]
+  end
+
+  subgraph CONTENT [" Content Library "]
+    SCHEMAS["JSON Schemas"]
+    DATAFILES["World Data Files"]
+    LOADER["Content Loader"]
+  end
+
+  subgraph MECHANICS [" Game Mechanics "]
+    CHECKS["Skill Checks"]
+    PASSIVE["Passive Checks"]
+    COMBAT["Attack &amp; Damage"]
+    CONDITIONS["Conditions"]
+    DEATHSTATE["Death State"]
+    INITIATIVE["Initiative"]
+  end
+
+  subgraph ECONOMY [" Economy "]
+    WALLET["Wallet"]
+    SHOPS["Shops"]
+    PRICING["Faction Pricing"]
+    CRAFTING["Crafting"]
+    GATHERING["Gathering"]
+  end
+
+  subgraph SOCIAL [" Social Systems "]
+    COMPANIONS["Companions"]
+    COMPANIONAI["Companion AI"]
+    LOYALTY["Loyalty"]
+    FACTIONS["Faction Rep"]
+    PROPAGATION["Propagation"]
+  end
+
+  subgraph ADMIN [" Admin Tools "]
+    WORKSHOP["Library Workshop"]
+    RPTESTER["RP Tester"]
+  end
+
+  subgraph CONSEQUENCES [" Consequence System "]
+    EVALUATOR["Consequence Evaluator"]
+    NPCSTATE["NPC Instance State"]
+    WORLDFLAGS["World Flags"]
+  end
+
+  subgraph NARRATIVE [" Narrative System "]
+    THREADS["Thread Tracker"]
+    SIGNALVAL["Signal Validator"]
+    DIRECTOR["Narrative Director"]
+  end
+
+  subgraph GENERATION [" Generation System "]
+    TEMPLATELOAD["Template Loader"]
+    STATGEN["Stat Generator"]
+    NPCGEN["NPC Generator"]
+  end
+
+  subgraph ARCS [" Arc System "]
+    BLUEPRINTS["Blueprint Loader"]
+    ARCINSTANT["Arc Instantiator"]
+    CUSTOMARC["Custom Arc Assembler"]
+  end
+
+  subgraph GAMECONTEXT [" Game Context Bridge "]
+    CTXLOADER["Context Loader"]
+    CTXFORMAT["Context Formatter"]
+  end
+
+  subgraph JOURNAL [" Journal &amp; Preferences "]
+    AGGREGATOR["Journal Aggregator"]
+    CHARPREFS["Character Preferences"]
+  end
+
+  %% Primary flows — top to bottom
+  CLIENT --> GATEWAY
+  GATEWAY --> LIFECYCLE
+  GATEWAY --> CHARACTERS
+  LIFECYCLE --> DIALOGUE
+  DIALOGUE --> MECHANICS
+  DIALOGUE --> STREAMING
+  NPCLOADER --> PROMPTS
+  PROMPTS --> STREAMING
+  MECHANICS --> ECONOMY
+  CHECKS --> COMBAT
+  PASSIVE --> PROMPTS
+  CONDITIONS --> CHECKS
+  CONDITIONS --> COMBAT
+  ECONOMY --> WALLET
+  SHOPS --> PRICING
+  FACTIONS --> PRICING
+  CRAFTING --> CHECKS
+  COMPANIONS --> COMBAT
+  COMPANIONAI --> COMBAT
+  PROPAGATION --> FACTIONS
+  CONTENT --> DIALOGUE
+  LOADER --> NPCLOADER
+  LOADER --> SHOPS
+  SCHEMAS --> WORKSHOP
+  WORKSHOP --> DATAFILES
+  RPTESTER --> WEBSOCKET
+  PROGRESSION --> LIFECYCLE
+  CHARCRUD --> CHECKS
+  RECOVERY --> WEBSOCKET
+
+  %% Consequence System flows
+  DIALOGUE --> EVALUATOR
+  EVALUATOR --> NPCSTATE
+  EVALUATOR --> WORLDFLAGS
+  EVALUATOR --> FACTIONS
+  WORLDFLAGS --> CTXLOADER
+
+  %% Narrative System flows
+  DIALOGUE --> SIGNALVAL
+  SIGNALVAL --> THREADS
+  DIRECTOR --> SCENES
+  THREADS --> CTXLOADER
+
+  %% Generation System flows
+  CONTENT --> TEMPLATELOAD
+  TEMPLATELOAD --> NPCGEN
+  STATGEN --> NPCGEN
+  NPCGEN --> DATAFILES
+
+  %% Arc System flows
+  TEMPLATELOAD --> BLUEPRINTS
+  BLUEPRINTS --> ARCINSTANT
+  BLUEPRINTS --> CUSTOMARC
+  ARCINSTANT --> SCENES
+
+  %% Game Context Bridge flows
+  CTXLOADER --> CTXFORMAT
+  CTXFORMAT --> PROMPTS
+  NPCSTATE --> CTXLOADER
+  FACTIONS --> CTXLOADER
+  COMPANIONS --> CTXLOADER
+
+  %% Journal flows
+  NPCSTATE --> AGGREGATOR
+  CHARCRUD --> AGGREGATOR
+  CHARPREFS --> AGGREGATOR
+        </pre>
+      </div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#58a6ff"></div> Gateway / Lifecycle</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#d29922"></div> NPC Dialogue</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#3fb950"></div> Game Mechanics</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#db61a2"></div> Economy</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#7c6af0"></div> Social</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#7ee787"></div> Content</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#f85149"></div> Consequences</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#a371f7"></div> Narrative</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#79c0ff"></div> Generation / Arcs</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ffa657"></div> Context Bridge</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#d2a8ff"></div> Journal</div>
+    </div>
+  </div>
+
+  <div class="detail-panel collapsed" id="detail-panel">
+    <div class="empty-panel">Click any box in the diagram to see what it does, its key components, and which files implement it.</div>
+  </div>
+</div>
+
+<script>
+const DETAILS = {
+
+AUTH: {
+  title: "Auth & Tokens",
+  desc: "JWT-based authentication. Account tokens (30-day) for general access, session tokens (12-hour) for gameplay with world, session, role, and mode embedded.",
+  components: [
+    { name: "create_session_token()", desc: "Generate 12-hour JWT with world_id, session_id, role, mode" },
+    { name: "create_account_token()", desc: "Generate 30-day JWT for account-level access" },
+    { name: "decode_token()", desc: "Validate JWT and return typed payload" },
+    { name: "auth_middleware()", desc: "Starlette middleware — validates JWT on every request" },
+    { name: "require_tier() / require_role()", desc: "Enforce access tier (1/2) or role (player/dm)" },
+  ],
+  files: ["relay/auth/tokens.py", "relay/auth/middleware.py"],
+  flows: ["Client sends JWT in header or WebSocket auth frame", "Session tokens carry: player_id, world_id, session_id, tier, role, mode"]
+},
+
+RATELIMIT: {
+  title: "Rate Limiter",
+  desc: "In-memory per-IP rate limiting. WebSocket dialogue has a 3-second cooldown between messages.",
+  components: [
+    { name: "RateLimitMiddleware", desc: "Per-IP counters with configurable per-endpoint limits" },
+  ],
+  files: ["relay/middleware/rate_limit.py"],
+  flows: ["429 Too Many Requests on violation", "3s minimum between WebSocket turns"]
+},
+
+SESSIONS: {
+  title: "Session Manager",
+  desc: "A session is one play sitting (60-240 min). Creates JWTs, tracks analytics, handles level-up at session end.",
+  components: [
+    { name: "POST /session/start", desc: "Create session, validate tier, return JWT" },
+    { name: "GET /session/{id}/state", desc: "Full snapshot: scenes, pending turns, status" },
+    { name: "POST /session/{id}/end", desc: "End session, compute analytics, optionally level up" },
+    { name: "_build_session_analytics()", desc: "LLM call count, p95 latency, cache rate, check pass rate" },
+  ],
+  files: ["relay/endpoints/session.py"],
+  flows: ["POST /session/start returns session_token", "Level-up requires min 5 turns"]
+},
+
+SCENES: {
+  title: "Scene Manager",
+  desc: "A scene is one conversation with an NPC. Tracks dialogue mode (RP or quick-chat), environmental effects, and hidden elements for passive checks.",
+  components: [
+    { name: "POST /scene", desc: "Start scene with NPC (max 20 per session)" },
+    { name: "POST /scene/{id}/end", desc: "End scene, build summary" },
+    { name: "PATCH /scene/{id}", desc: "DM/admin direct scene_state injection" },
+    { name: "scene_state", desc: "emotional_temperature, environmental_effects, hidden_elements" },
+  ],
+  files: ["relay/endpoints/scene.py"],
+  flows: ["Scene state updated atomically after each RP turn", "Hidden elements trigger passive checks"]
+},
+
+RECOVERY: {
+  title: "Turn Recovery",
+  desc: "Write-ahead turn persistence. Every turn is saved BEFORE processing so crashes can be recovered on reconnect.",
+  components: [
+    { name: "create_pending_turn()", desc: "Write turn record before any LLM call (Invariant #12)" },
+    { name: "update_stage()", desc: "received → analysis → checks_resolved → streaming → complete" },
+    { name: "complete_turn() / fail_turn()", desc: "Mark done or failed with error" },
+    { name: "mark_stale_turns()", desc: "Auto-fail turns older than 5 minutes" },
+  ],
+  files: ["relay/persistence/pending_turns.py"],
+  flows: ["Turn written → LLM called → stage updated at each step", "On reconnect: pending turns sent for client resume"]
+},
+
+WEBSOCKET: {
+  title: "WebSocket Protocol",
+  desc: "The heart of NPC dialogue. JSON frames with type discriminator. Handles auth, RP turns (2 LLM calls), quick-chat (1 call), and streaming.",
+  components: [
+    { name: "WS /dialogue", desc: "Main WebSocket endpoint for all NPC conversation" },
+    { name: "_handle_rp_turn()", desc: "Two-call flow: analysis → check resolution → final prose" },
+    { name: "_handle_quickchat()", desc: "Single LLM call for transactional dialogue" },
+    { name: "_handle_check_confirm()", desc: "Resume after player confirms checks (solo mode)" },
+  ],
+  files: ["relay/endpoints/dialogue.py"],
+  flows: [
+    "Client sends: auth, rp_turn, quickchat_turn, check_confirm, heartbeat",
+    "Server sends: stream_start/chunk/end, check_proposal, check_result, animation_directive, scene_update",
+    "Solo: checks proposed then confirmed. Multiplayer: auto-resolve",
+  ]
+},
+
+PROMPTS: {
+  title: "Prompt Builder",
+  desc: "Constructs LLM prompts with Anthropic cache tiers. NPC personality is Tier 1 (cached), history is Tier 2, check results Tier 3 (never cached).",
+  components: [
+    { name: "build_rp_system_prompt()", desc: "Anthropic cache-control blocks for RP system prompt" },
+    { name: "build_analysis_messages()", desc: "First LLM call: structured scene analysis" },
+    { name: "build_final_prose_messages()", desc: "Second LLM call: narrative with check results" },
+    { name: "build_quickchat_system_prompt()", desc: "Single-turn quick-chat prompt" },
+  ],
+  files: ["relay/ai/rp_prompts.py", "relay/ai/chat_prompts.py"],
+  flows: ["History trimmed to last 40 messages with memory summary", "Passive check hints injected into final prose call"]
+},
+
+NPCLOADER: {
+  title: "NPC Loader",
+  desc: "Loads NPC personality files from disk with in-memory caching. Validates against schema. Hot-reload for Workshop edits.",
+  components: [
+    { name: "load_npc()", desc: "Load from npcs/{world}/{id}.json with cache" },
+    { name: "reload_npc()", desc: "Force re-read (hot-reload after Workshop edit)" },
+  ],
+  files: ["relay/ai/npc_loader.py"],
+  flows: ["First load validates against NpcPersonality schema", "Cache persists until server restart (Phase 0)"]
+},
+
+STREAMING: {
+  title: "LLM Streaming",
+  desc: "Anthropic Claude integration. Streams NPC responses token-by-token over WebSocket. Model: claude-sonnet-4-6.",
+  components: [
+    { name: "AsyncAnthropic client", desc: "One client per WebSocket connection" },
+    { name: "stream_start/chunk/end", desc: "Progressive delivery of NPC prose" },
+    { name: "_extract_tool_result()", desc: "Parse structured analysis from first LLM call" },
+    { name: "_validate_animation_directives()", desc: "Check directives against NPC profile" },
+  ],
+  files: ["relay/endpoints/dialogue.py"],
+  flows: ["Call 1: structured analysis → checks, scene changes, animations", "Call 2: streamed narrative prose with check results"]
+},
+
+CHECKS: {
+  title: "Skill Check Resolver",
+  desc: "D&D-style d20 checks. LLM proposes checks, this module resolves them mechanically. Never trusts raw LLM values — clamps everything.",
+  components: [
+    { name: "resolve_check()", desc: "d20 + ability mod + proficiency vs DC → pass/fail" },
+    { name: "validate_check()", desc: "Clamp LLM-proposed skill, DC [5-30], advantage/disadvantage" },
+    { name: "roll_d20()", desc: "Shared roller: advantage (2d20 high), disadvantage (2d20 low)" },
+    { name: "determine_roll_mode()", desc: "Combine all adv/disadv sources (conditions, environment)" },
+    { name: "resolve_contested_check()", desc: "Two-sided opposed check (grapple, deception vs insight)" },
+  ],
+  files: ["relay/checks/resolver.py"],
+  flows: ["LLM proposes {skill, dc, reason} → clamp → roll → pass/fail", "Natural 20 and natural 1 tracked separately"]
+},
+
+PASSIVE: {
+  title: "Passive Checks",
+  desc: "Automatic perception/insight/investigation. No dice — uses 10 + modifiers. Triggers discovery hints injected into the narrator prompt.",
+  components: [
+    { name: "compute_passive_check()", desc: "10 + ability mod + proficiency (-5 if disadvantaged)" },
+    { name: "evaluate_passive_checks()", desc: "Test all hidden_elements, return triggered hints" },
+  ],
+  files: ["relay/checks/resolver.py"],
+  flows: ["Scene hidden_elements: [{id, dc, skill, hint}]", "Triggered hints feed into next LLM call"]
+},
+
+COMBAT: {
+  title: "Attack & Damage",
+  desc: "Attack rolls vs AC, damage with resistances/vulnerabilities/immunities, critical hits, saving throws. Full D&D-style combat resolution.",
+  components: [
+    { name: "attack_roll()", desc: "d20 + proficiency + ability mod with advantage/disadvantage" },
+    { name: "resolve_attack()", desc: "Compare roll vs AC → hit / miss / critical" },
+    { name: "damage_roll()", desc: "Weapon dice + ability mod (criticals double dice)" },
+    { name: "apply_damage_resistances()", desc: "Half/double/zero based on damage type" },
+    { name: "saving_throw()", desc: "d20 + ability mod + proficiency vs DC" },
+    { name: "compute_ac()", desc: "10 + armour + DEX mod + shield + magical" },
+  ],
+  files: ["relay/combat/resolver.py", "relay/endpoints/combat.py"],
+  flows: ["Roll → compare AC → damage → apply resistances → reduce HP", "0 HP → enter death state"]
+},
+
+CONDITIONS: {
+  title: "Conditions & Buffs",
+  desc: "Status effects with duration tracking. Rider conditions auto-apply (stunned → incapacitated). Durations tick by turn/round/minute.",
+  components: [
+    { name: "add_condition()", desc: "Apply condition + auto-apply rider conditions" },
+    { name: "remove_condition()", desc: "Remove by ID, suppress riders" },
+    { name: "tick_durations()", desc: "Decrement durations, remove expired" },
+    { name: "get_attack/defense/save_modifiers()", desc: "Query advantage/disadvantage from conditions" },
+    { name: "increment_exhaustion()", desc: "Add exhaustion level (6 = retirement)" },
+  ],
+  files: ["relay/combat/conditions.py", "relay/registry.py"],
+  flows: ["Conditions affect attack rolls, defense, saves, and skill checks", "Exhaustion stacks 1-6 with escalating penalties"]
+},
+
+DEATHSTATE: {
+  title: "Death State",
+  desc: "At 0 HP, a ticking exhaustion clock starts. Each turn adds exhaustion. Healing ends the state. Exhaustion 6 = character retirement (not coin-flip death).",
+  components: [
+    { name: "enter_death_state()", desc: "At 0 HP: +1 exhaustion, start tracking" },
+    { name: "tick_death_state()", desc: "Each turn at 0 HP: +1 exhaustion (max 3 from death)" },
+    { name: "heal_from_death_state()", desc: "Any healing above 0 ends death state" },
+    { name: "is_retired()", desc: "Exhaustion >= 6 = permanent retirement" },
+  ],
+  files: ["relay/combat/death_state.py"],
+  flows: ["Ticking clock, not coin flip", "Max 3 exhaustion from death state alone"]
+},
+
+INITIATIVE: {
+  title: "Initiative",
+  desc: "Turn order: d20 + DEX modifier, highest goes first.",
+  components: [
+    { name: "roll_initiative()", desc: "d20 + DEX mod for each participant" },
+    { name: "determine_turn_order()", desc: "Sort descending by initiative total" },
+  ],
+  files: ["relay/combat/initiative.py"],
+  flows: ["All combatants roll simultaneously", "Ties broken by DEX score"]
+},
+
+WALLET: {
+  title: "Wallet & Transactions",
+  desc: "Per-character currency balances with immutable audit log. Every credit/debit creates a TransactionLog row. All economy flows through here.",
+  components: [
+    { name: "credit() / debit()", desc: "Add/subtract funds + create audit log entry" },
+    { name: "GET /wallet/{id}", desc: "Get balances by currency" },
+    { name: "POST /wallet/grant", desc: "Admin/quest reward: add currency" },
+    { name: "TransactionLog", desc: "Immutable audit: tx_type, amount, balance_after, item_id" },
+  ],
+  files: ["relay/economy/wallet.py", "relay/endpoints/wallet.py"],
+  flows: ["Every transaction logged (Invariant #14)", "Insufficient funds = immediate rejection"]
+},
+
+SHOPS: {
+  title: "Shop System",
+  desc: "NPC-operated stores with faction-adjusted pricing. Inventory from NPC files. Stock tracked. Hostile factions refuse trade.",
+  components: [
+    { name: "GET /shop/{npc_id}", desc: "Browse inventory with faction prices" },
+    { name: "POST /shop/{npc_id}/buy", desc: "Debit wallet, add to inventory, decrement stock" },
+    { name: "POST /shop/{npc_id}/sell", desc: "Credit wallet, remove from inventory" },
+  ],
+  files: ["relay/economy/shop.py", "relay/endpoints/shop.py"],
+  flows: ["Hostile = +50% buy, can't sell", "Allied = -25% buy, +25% sell", "Bound items can't be sold"]
+},
+
+PRICING: {
+  title: "Faction Pricing",
+  desc: "Standing → price modifier. Five tiers: hostile, unfriendly, neutral, friendly, allied.",
+  components: [
+    { name: "compute_buy_price()", desc: "base × markup × faction modifier" },
+    { name: "compute_sell_price()", desc: "base × sell_back_ratio × faction modifier" },
+    { name: "faction_tier()", desc: "Standing [-100,100] → tier label" },
+  ],
+  files: ["relay/economy/pricing.py"],
+  flows: ["Hostile: buy +50%", "Friendly: buy -10%, sell +10%", "Allied: buy -25%, sell +25%"]
+},
+
+CRAFTING: {
+  title: "Crafting Engine",
+  desc: "Recipe-driven with skill checks. Materials consumed on attempt (50% loss on failure). Nat 20 gives bonus output.",
+  components: [
+    { name: "POST /craft", desc: "Validate requirements → skill check → produce output" },
+    { name: "validate_recipe_requirements()", desc: "Check level, known recipes, materials, station" },
+    { name: "consume_materials()", desc: "Full on success, 50% on failure" },
+  ],
+  files: ["relay/crafting/crafter.py", "relay/endpoints/craft.py"],
+  flows: ["Validate → roll skill check → consume materials → produce items", "Critical success: +1 output quantity"]
+},
+
+GATHERING: {
+  title: "Resource Gathering",
+  desc: "Region-based collection with skill checks. Yield varies between min and max.",
+  components: [
+    { name: "POST /gather", desc: "Attempt gathering from a region node" },
+    { name: "resolve_gather_yield()", desc: "On success: roll yield between min/max" },
+  ],
+  files: ["relay/crafting/gathering.py", "relay/endpoints/craft.py"],
+  flows: ["Region defines nodes: {item_id, skill, dc, yield_min, yield_max}", "Materials stackable in inventory"]
+},
+
+COMPANIONS: {
+  title: "Companion Recruitment",
+  desc: "NPCs join as companions if relationship is high enough. Validates affection threshold, companion limit, and quest conditions.",
+  components: [
+    { name: "POST /companions/recruit", desc: "Recruit NPC as companion" },
+    { name: "validate_recruitment()", desc: "Check affection, limit, conditions" },
+    { name: "create_companion_entry()", desc: "Build state: hp, behavior_type, loyalty_strain" },
+  ],
+  files: ["relay/companions/manager.py", "relay/endpoints/companion.py"],
+  flows: ["Companion state persists across sessions (Invariant #20)", "Never permanently killed on incapacitation"]
+},
+
+COMPANIONAI: {
+  title: "Companion Combat AI",
+  desc: "Automatic combat actions by behavior type. Companions act on their own initiative without player input.",
+  components: [
+    { name: "resolve_companion_action()", desc: "Choose action: aggressive/defensive/support/evasive" },
+  ],
+  files: ["relay/companions/combat_ai.py"],
+  flows: ["Aggressive: attack weakest", "Defensive: protect player", "Support: heal/buff", "Evasive: ranged/dodge"]
+},
+
+LOYALTY: {
+  title: "Loyalty & Mood",
+  desc: "Companion satisfaction. Incapacitation damages loyalty. Exceeding strain threshold may trigger departure.",
+  components: [
+    { name: "handle_incapacitation()", desc: "0 HP: damage loyalty, mood change" },
+    { name: "apply_dismissal()", desc: "Farewell template + relationship modifier" },
+    { name: "recover_after_combat()", desc: "Reset HP, clear temp conditions" },
+  ],
+  files: ["relay/companions/loyalty.py", "relay/companions/ambient.py"],
+  flows: ["Loyalty strain accumulates from incapacitation", "Dismissal uses farewell_template from NPC file"]
+},
+
+FACTIONS: {
+  title: "Faction Reputation",
+  desc: "Standing from -100 to 100, five tiers. Affects shop prices, NPC dialogue, quest access.",
+  components: [
+    { name: "PATCH /factions/{id}/standing", desc: "Apply standing change" },
+    { name: "GET /factions/{char_id}/standings", desc: "List all faction standings" },
+    { name: "resolve_tier()", desc: "Standing → hostile/unfriendly/neutral/friendly/allied" },
+  ],
+  files: ["relay/factions/reputation.py", "relay/endpoints/faction.py"],
+  flows: ["Quest rewards, dialogue choices, combat actions change standing", "Five tiers with distinct gameplay effects"]
+},
+
+PROPAGATION: {
+  title: "Ally/Rival Propagation",
+  desc: "Standing changes ripple: allies gain 50%, rivals lose 25%. Single-hop only — no cascading chains.",
+  components: [
+    { name: "apply_standing_change()", desc: "Delta + propagate to allies/rivals" },
+  ],
+  files: ["relay/factions/reputation.py"],
+  flows: ["Faction A gains +20 → ally B gains +10, rival C loses -5", "Single-hop: B's allies NOT affected"]
+},
+
+CHARCRUD: {
+  title: "Character CRUD",
+  desc: "Create, read, update characters. Computes HP, AC, passives from ability scores. Protected fields prevent client tampering.",
+  components: [
+    { name: "POST /character", desc: "Create with ability scores → compute derived stats" },
+    { name: "PATCH /character/{id}", desc: "Update (protected fields guarded)" },
+    { name: "_compute_defaults()", desc: "Calculate hp_max, ac, passive_checks" },
+  ],
+  files: ["relay/endpoints/character.py"],
+  flows: ["Protected: wallet, inventory, faction_standing, hp_current, conditions", "Only relay endpoints can modify protected fields"]
+},
+
+PROGRESSION: {
+  title: "Levelling & Stats",
+  desc: "Levels 1-20 in four bands: Newcomer (1-4), Established (5-10), Known (11-16), Legendary (17-20). Level-up at session end.",
+  components: [
+    { name: "level_increment", desc: "Applied at POST /session/{id}/end (requires 5+ turns)" },
+  ],
+  files: ["relay/endpoints/session.py", "relay/endpoints/character.py"],
+  flows: ["HP recomputed on level change", "Proficiency bonus: (level-1)//4 + 2"]
+},
+
+SCHEMAS: {
+  title: "JSON Schemas",
+  desc: "13 schema files defining all game content structure. CI validates on every push. Workshop forms generated from these at runtime.",
+  components: [
+    { name: "npc_personality.json", desc: "Full NPC: personality, mechanics, shop, companion data" },
+    { name: "item.json", desc: "Weapons, armour, consumables, materials" },
+    { name: "ability.json", desc: "Abilities with damage dice, costs, levels" },
+    { name: "quest.json", desc: "Objectives, rewards, completion flags" },
+    { name: "faction.json", desc: "Faction definitions with allies/rivals" },
+    { name: "scene_state.json", desc: "Environmental effects, hidden elements" },
+  ],
+  files: ["schemas/npc_personality.json", "schemas/item.json", "schemas/ability.json", "schemas/recipe.json", "schemas/quest.json", "schemas/faction.json", "schemas/character_sheet.json", "schemas/scene_state.json", "schemas/world_config.json", "schemas/animation_directive.json", "schemas/shop_data.json", "schemas/traversal_mode.json", "schemas/world_events.json"],
+  flows: ["CI validates all content files on push", "Workshop forms generated from schemas (no hardcoded layouts)", "Pydantic models in relay/schemas.py mirror these"]
+},
+
+DATAFILES: {
+  title: "World Data Files",
+  desc: "JSON content organized by type and world. NPCs, items, abilities, quests, factions, lore, regions, recipes. Currently populated for inkglass_dark.",
+  components: [
+    { name: "npcs/{world}/*.json", desc: "NPC personality files" },
+    { name: "items/{world}/*.json", desc: "Item definitions" },
+    { name: "abilities/{world}/*.json", desc: "Ability definitions" },
+    { name: "quests/{world}/*.json", desc: "Quest objectives and rewards" },
+    { name: "factions/{world}/*.json", desc: "Faction definitions" },
+    { name: "regions/{world}/*.json", desc: "Region connections and gathering nodes" },
+    { name: "lore/{world}/*.json", desc: "Lore chunks for RAG retrieval" },
+  ],
+  files: ["npcs/inkglass_dark/", "items/inkglass_dark/", "abilities/inkglass_dark/", "quests/inkglass_dark/", "factions/inkglass_dark/", "crafting/inkglass_dark/", "regions/inkglass_dark/", "lore/inkglass_dark/"],
+  flows: ["Content is data, not code (Invariant #7)", "7 worlds: inkglass_dark, murim, cybernightlife, wha_au, atla_au, gachiakuta_au, hxh_au"]
+},
+
+LOADER: {
+  title: "Content Loader",
+  desc: "Server-side file loading with in-memory cache. The relay reads content directly — never trusts the client (Invariant #1).",
+  components: [
+    { name: "load_faction() / load_faction_registry()", desc: "Load faction files for a world" },
+    { name: "load_npc()", desc: "Load NPC personality (via ai/npc_loader)" },
+    { name: "_load_item()", desc: "Load item definition (via shop endpoint)" },
+  ],
+  files: ["relay/world/content_loader.py", "relay/ai/npc_loader.py"],
+  flows: ["First load: disk → validate → cache", "Phase 0: restart to pick up changes"]
+},
+
+WORKSHOP: {
+  title: "Library Workshop",
+  desc: "Browser-based content editor on port 8081. Forms generated from JSON schemas at runtime. Validates before saving. Atomic writes.",
+  components: [
+    { name: "Schema-driven form generator", desc: "Reads schema, renders fields dynamically" },
+    { name: "PUT /api/content/{type}/{world}/{id}", desc: "Validate + atomic write" },
+    { name: "POST .../validate", desc: "Dry-run validation without saving" },
+    { name: "Form / JSON toggle", desc: "Switch between visual form and raw editor" },
+  ],
+  files: ["relay/admin/app.py", "relay/admin/reload.py", "relay/admin/static/app.js", "relay/admin/static/index.html"],
+  flows: ["Select content type + world → see files", "Edit → validate against schema → atomic write", "No hardcoded forms (Invariant #24)"]
+},
+
+RPTESTER: {
+  title: "RP Tester",
+  desc: "In-browser NPC conversation tester. Creates throwaway sessions and connects to the relay WebSocket. Auto-confirms checks.",
+  components: [
+    { name: "POST /api/test-session", desc: "Create test account, character, session, scene → JWT" },
+    { name: "WebSocket client", desc: "Connects to relay /dialogue with test JWT" },
+    { name: "Auto check_confirm", desc: "Confirms proposed checks automatically" },
+  ],
+  files: ["relay/admin/app.py", "relay/admin/static/app.js"],
+  flows: ["Select world + NPC → Connect", "Edit in Workshop → test in RP Tester immediately"]
+},
+
+// ─── Consequence System ───────────────────────────────────────────
+
+EVALUATOR: {
+  title: "Consequence Evaluator",
+  desc: "Processes world_mutations emitted by the LLM analysis call. Validates and clamps all values before applying faction, relationship, and world flag changes.",
+  components: [
+    { name: "apply_world_mutations()", desc: "Route mutations by type: faction, relationship, world_flag" },
+    { name: "validate_mutation()", desc: "Clamp deltas [-50,50], verify faction/NPC IDs exist" },
+    { name: "ConsequenceProfile", desc: "Per-NPC protection level: protected, vulnerable, expendable" },
+  ],
+  files: ["relay/consequences/evaluator.py", "relay/consequences/profiles.py"],
+  flows: ["LLM proposes mutations → evaluator validates → applies atomically", "Protected NPCs cannot be killed or permanently altered"]
+},
+
+NPCSTATE: {
+  title: "NPC Instance State",
+  desc: "Per-character NPC tracking. Records status (alive/injured/dead), disposition overrides, flags, and last interaction summary. Created on first meaningful interaction.",
+  components: [
+    { name: "get_instance()", desc: "Load NPC state for character+npc pair" },
+    { name: "upsert_instance()", desc: "Create or update NPC instance state" },
+    { name: "NpcInstanceState model", desc: "ORM: status, disposition_override, flags (JSON), last_interaction_summary" },
+  ],
+  files: ["relay/consequences/npc_state.py", "relay/models.py"],
+  flows: ["Created on first interaction, persists across sessions", "Status feeds into Game Context Bridge → NPC prompts", "Disposition override supersedes relationship score for dialogue tone"]
+},
+
+WORLDFLAGS: {
+  title: "World Flags",
+  desc: "Boolean or keyed world-state markers per character. Tracks wanted status, bounties, quest milestones, and permanent world changes.",
+  components: [
+    { name: "set_flag()", desc: "Add a flag: wanted_in:market_district, bounty_active, etc." },
+    { name: "clear_flag()", desc: "Remove a flag when condition resolves" },
+    { name: "get_flags()", desc: "Load all active flags for a character (capped at 10 for prompt)" },
+  ],
+  files: ["relay/consequences/world_flags.py", "relay/models.py"],
+  flows: ["Flags injected into NPC prompts via Context Bridge", "NPCs react to wanted status, bounties, quest state", "Capped at 10 in prompt to prevent bloat"]
+},
+
+// ─── Narrative System ─────────────────────────────────────────────
+
+THREADS: {
+  title: "Thread Tracker",
+  desc: "Tracks recurring narrative threads across turns. When a player shows sustained interest (mentions 3+ times), the thread is promoted for NPC awareness.",
+  components: [
+    { name: "upsert_thread()", desc: "Create or increment thread mention count" },
+    { name: "get_active_threads()", desc: "Load threads with mention_count ≥ threshold" },
+    { name: "NarrativeThread model", desc: "ORM: thread_key, signal_type, summary, mention_count, related_npcs, related_regions" },
+  ],
+  files: ["relay/narrative/threads.py", "relay/models.py"],
+  flows: ["LLM emits narrative_signals → validator → thread upsert", "Active threads (3+ mentions) included in NPC prompt context", "Thread keys reusable: missing_brother, guild_corruption, etc."]
+},
+
+SIGNALVAL: {
+  title: "Signal Validator",
+  desc: "Validates narrative_signals from the LLM analysis call. Ensures signal types are valid, thread keys are snake_case, and related entities exist.",
+  components: [
+    { name: "validate_narrative_signals()", desc: "Check type enum, key format, entity references" },
+    { name: "Signal types", desc: "commitment, interest, revelation, tension" },
+  ],
+  files: ["relay/narrative/threads.py"],
+  flows: ["LLM proposes signals → validate → upsert threads", "Invalid signals logged and dropped (never crash the turn)"]
+},
+
+DIRECTOR: {
+  title: "Narrative Director",
+  desc: "Rules-based pacing agent (NOT LLM-driven). Evaluates triggers after each turn and writes director_signal to scene_state for the next NPC response.",
+  components: [
+    { name: "evaluate_triggers()", desc: "Check pacing rules: long silence, escalation, de-escalation" },
+    { name: "director_signal", desc: "Written to scene_state: advance_plot, raise_tension, offer_rest, introduce_npc" },
+  ],
+  files: ["relay/scenes/director.py"],
+  flows: ["Director proposes → narrator executes → NPC responds", "Signals are suggestions, not commands — NPC voice preserved", "Rules-based: no LLM cost for director evaluation"]
+},
+
+// ─── Generation System ────────────────────────────────────────────
+
+TEMPLATELOAD: {
+  title: "Template Loader",
+  desc: "Loads and caches NPC generation templates from templates/{world_id}/npc_templates.json. One template per role (merchant, guard, scholar, etc.).",
+  components: [
+    { name: "load_templates()", desc: "Async load with double-check cache pattern" },
+    { name: "get_template()", desc: "Get specific template by world + role" },
+    { name: "NpcTemplate model", desc: "Pydantic: ability profiles, animation defaults, few-shot templates, name pools" },
+    { name: "clear_cache()", desc: "For testing / hot-reload" },
+  ],
+  files: ["relay/generation/template_loader.py"],
+  flows: ["Templates define stat profiles, few-shot patterns, name pools per role", "TOCTOU-safe: double-check locking on cache writes", "Validated with Pydantic on load — invalid templates skipped"]
+},
+
+STATGEN: {
+  title: "Stat Generator",
+  desc: "Generates mechanical stats for NPCs from templates. Assigns ability scores based on primary/secondary/dump profile, rolls HP, computes AC.",
+  components: [
+    { name: "generate_stats()", desc: "Template + level → full stat block (scores, HP, AC, saves, skills)" },
+    { name: "assign_ability_scores()", desc: "Primary gets 14-18, secondary 12-14, dump 8-10" },
+    { name: "roll_hit_points()", desc: "Hit die × level + CON modifier × level" },
+  ],
+  files: ["relay/generation/stat_generator.py"],
+  flows: ["Template defines which scores are primary/secondary/dump", "Level range from template determines power band", "Mechanical stats never exposed to LLM (Invariant #8)"]
+},
+
+NPCGEN: {
+  title: "NPC Generator",
+  desc: "Full NPC generation pipeline. Combines template + stat generation + personality assembly into a complete NPC personality file ready for use.",
+  components: [
+    { name: "generate_npc()", desc: "Template → stats → personality → write to disk" },
+    { name: "assemble_personality()", desc: "Fill few-shot templates, select name from pool, build knowledge boundaries" },
+  ],
+  files: ["relay/generation/npc_generator.py"],
+  flows: ["Template → stat_generator → personality assembly → JSON file", "Generated NPCs pass same validation as hand-authored ones", "Name selected from template's name_pool (no duplicates in world)"]
+},
+
+// ─── Arc System ───────────────────────────────────────────────────
+
+BLUEPRINTS: {
+  title: "Blueprint Loader",
+  desc: "Loads event arc blueprints from scenarios/{world_id}/blueprints.json. Blueprints define multi-scene story arcs with triggers, stages, and outcomes.",
+  components: [
+    { name: "load_blueprints()", desc: "Async load with TOCTOU-safe double-check cache" },
+    { name: "get_blueprint()", desc: "Get specific blueprint by world + ID" },
+    { name: "EventArcBlueprint model", desc: "Pydantic: id, stages, triggers, participants, outcomes" },
+    { name: "clear_cache()", desc: "For testing / hot-reload" },
+  ],
+  files: ["relay/generation/blueprint_loader.py"],
+  flows: ["Blueprints are authored content, not generated", "Each blueprint defines a reusable story arc pattern", "TOCTOU-safe: double-check locking on cache writes"]
+},
+
+ARCINSTANT: {
+  title: "Arc Instantiator",
+  desc: "Creates a live instance of a blueprint arc for a specific character. Tracks current stage, progress flags, and participant NPCs.",
+  components: [
+    { name: "instantiate_arc()", desc: "Blueprint + character → live arc instance with state" },
+    { name: "advance_stage()", desc: "Move arc to next stage when conditions met" },
+    { name: "check_triggers()", desc: "Evaluate stage triggers against current game state" },
+  ],
+  files: ["relay/generation/arc_instantiator.py"],
+  flows: ["Blueprint → instance with stage=0, flags={}", "Stage triggers evaluated after each turn", "Completed arcs archived, outcomes applied"]
+},
+
+CUSTOMARC: {
+  title: "Custom Arc Assembler",
+  desc: "DM Workshop tool for assembling custom arcs from blueprint stages. Mix and match stages from different blueprints to create unique story arcs.",
+  components: [
+    { name: "assemble_custom_arc()", desc: "Cherry-pick stages from multiple blueprints" },
+    { name: "validate_arc_flow()", desc: "Ensure stage transitions are coherent" },
+  ],
+  files: ["relay/generation/custom_arc_assembler.py"],
+  flows: ["DM picks stages from catalogue → assemble → validate → save", "Custom arcs stored alongside authored blueprints", "DM Workshop writes never propagate to global defaults (Invariant #17)"]
+},
+
+// ─── Game Context Bridge ──────────────────────────────────────────
+
+CTXLOADER: {
+  title: "Context Loader",
+  desc: "Loads game-state from 7+ data sources into a single frozen GameStateContext snapshot per turn. This bridges faction/relationship/companion/NPC data into prompts.",
+  components: [
+    { name: "load_game_context()", desc: "Async: character + NPC → frozen GameStateContext" },
+    { name: "resolve_character_id()", desc: "Look up character from session" },
+    { name: "GameStateContext dataclass", desc: "Immutable snapshot: faction, relationship, companions, NPC state, threads, flags, scene" },
+  ],
+  files: ["relay/ai/game_context.py"],
+  flows: [
+    "Loads: faction standing, relationship score, companion names, NPC instance state, narrative threads, world flags, scene environment",
+    "Handles polymorphic data: int or {score, reason} formats for relationships/factions",
+    "One DB session per turn — short-lived, no connection hogging"
+  ]
+},
+
+CTXFORMAT: {
+  title: "Context Formatter",
+  desc: "Formats the GameStateContext snapshot into prompt text for the NPC system prompt (Tier 2 cache block). NPCs see standing, mood, flags — never raw numbers.",
+  components: [
+    { name: "format_context_block()", desc: "Context → structured text block for NPC prompt" },
+    { name: "Tier rendering", desc: "hostile/unfriendly/neutral/friendly/allied labels (not raw scores)" },
+    { name: "Section builder", desc: "Only includes relevant sections — empty context returns empty string" },
+  ],
+  files: ["relay/ai/game_context.py"],
+  flows: [
+    "Sections: RELATIONSHIP, FACTION REPUTATION, COMPANIONS, NPC STATUS, WORLD STATE, NARRATIVE THREADS, SCENE, NARRATIVE DIRECTION",
+    "Injected as Tier 2 cache block (invalidated on scene/faction changes)",
+    "Cap: 5 narrative threads, 10 world flags to prevent prompt bloat"
+  ]
+},
+
+// ─── Journal & Preferences ────────────────────────────────────────
+
+AGGREGATOR: {
+  title: "Journal Aggregator",
+  desc: "Read-only view assembling the World Journal from existing relay data. No new writes — purely aggregates people met, places visited, items, factions, and story so far.",
+  components: [
+    { name: "build_journal()", desc: "Master assembler: character → full WorldJournal" },
+    { name: "_build_people_met()", desc: "NPC instance state + relationships + player notes" },
+    { name: "_build_places_visited()", desc: "Single JOIN query: sessions → scenes → regions (N+1 fixed)" },
+    { name: "_build_items_found()", desc: "Character inventory (item_id extraction)" },
+    { name: "_build_factions()", desc: "Faction standings with polymorphic format handling" },
+    { name: "_build_story_so_far()", desc: "Session summaries in chronological order" },
+  ],
+  files: ["relay/journal/aggregator.py"],
+  flows: [
+    "View layer only — no new data written",
+    "Caps: 50 NPCs, 30 regions, 100 items, 20 sessions",
+    "People met: NPC instance state + relationships dict + player notes from preferences"
+  ]
+},
+
+CHARPREFS: {
+  title: "Character Preferences",
+  desc: "Player-authored metadata: backstory, story interests, topics to avoid, narrative pace, companion interest, exploration style, and per-NPC notes.",
+  components: [
+    { name: "CharacterPreferences model", desc: "ORM: backstory_blurb, story_interests (JSON), topics_to_avoid (JSON), content_rating, narrative_pace, etc." },
+    { name: "npc_notes", desc: "JSON dict of player's personal notes about NPCs they've met" },
+    { name: "ScenarioPreferences schema", desc: "Pydantic model for API validation" },
+  ],
+  files: ["relay/models.py", "relay/schemas.py", "relay/journal/aggregator.py"],
+  flows: [
+    "Set during character creation or updated via PATCH endpoint",
+    "NPC notes surfaced in journal People Met section",
+    "Content rating and topics_to_avoid inform narrative boundaries"
+  ]
+},
+
+};
+
+// Zoom state
+let currentZoom = 1.0;
+const wrapper = document.getElementById("diagram-wrapper");
+const scrollEl = document.getElementById("diagram-scroll");
+
+function zoomDiagram(delta, fit) {
+  if (fit) {
+    const svg = document.querySelector("svg");
+    if (!svg) return;
+    const svgW = parseFloat(svg.getAttribute("width")) || svg.getBoundingClientRect().width / currentZoom;
+    const available = scrollEl.clientWidth - 32;
+    currentZoom = Math.min(1.5, Math.max(0.3, available / svgW));
+  } else {
+    currentZoom = Math.min(2.0, Math.max(0.3, currentZoom + delta));
+  }
+  wrapper.style.transform = `scale(${currentZoom})`;
+  document.getElementById("zoom-label").textContent = Math.round(currentZoom * 100) + "%";
+}
+
+// Mermaid init
+mermaid.initialize({
+  startOnLoad: true,
+  securityLevel: "loose",
+});
+
+// After render, wire clicks and set readable zoom
+window.addEventListener("load", () => {
+  setTimeout(() => {
+    wireUpClicks();
+    // Start at 80% — readable text, scroll to explore
+    currentZoom = 0.8;
+    wrapper.style.transform = `scale(${currentZoom})`;
+    document.getElementById("zoom-label").textContent = "80%";
+  }, 600);
+});
+
+function wireUpClicks() {
+  const nodes = document.querySelectorAll(".node");
+  nodes.forEach(node => {
+    node.style.cursor = "pointer";
+    node.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = node.id?.replace(/^.*?flowchart-/, "").replace(/-\d+$/, "");
+      if (id && DETAILS[id]) {
+        document.querySelectorAll(".node.selected").forEach(n => n.classList.remove("selected"));
+        node.classList.add("selected");
+        showDetail(id);
+      }
+    });
+  });
+}
+
+function showDetail(id) {
+  const d = DETAILS[id];
+  if (!d) return;
+
+  const panel = document.getElementById("detail-panel");
+  panel.classList.remove("collapsed");
+
+  panel.innerHTML = `
+    <div class="panel-header">
+      <h2>${d.title}</h2>
+      <div class="desc">${d.desc}</div>
+    </div>
+    <div class="panel-body">
+      <ul class="component-list">
+        ${d.components.map(c => `
+          <li>
+            <div class="comp-name">${esc(c.name)}</div>
+            <div class="comp-desc">${esc(c.desc)}</div>
+          </li>
+        `).join("")}
+      </ul>
+      <div class="info-box">
+        <h4>How it works</h4>
+        ${d.flows.map(f => `<div class="flow-item"><span class="flow-arrow">&#9654;</span>${esc(f)}</div>`).join("")}
+      </div>
+      <div class="info-box">
+        <h4>Implemented in</h4>
+        ${d.files.map(f => `<code>${esc(f)}</code>`).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+</script>
+</body>
+</html>
