@@ -98,7 +98,13 @@ def create_test_session_token(
 
 
 def decode_token(token: str) -> AccountTokenPayload | SessionTokenPayload:
-    """Decode and validate a JWT. Raises jwt.PyJWTError on failure."""
+    """Decode and validate a JWT. Raises jwt.PyJWTError on failure.
+
+    Security notes:
+    - algorithms=[HS256] explicitly rejects "none" algorithm (PyJWT 2.4+ default).
+    - PyJWT rejects tokens signed with a different algorithm than specified.
+    - Expiry (exp) is validated automatically by PyJWT.
+    """
     raw = jwt.decode(token, settings.jwt_secret, algorithms=[_ALGORITHM])
     if raw.get("token_type") == "session":
         return SessionTokenPayload.model_validate(raw)

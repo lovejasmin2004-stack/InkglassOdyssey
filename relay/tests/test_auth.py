@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
+from unittest.mock import MagicMock
 
 import jwt
 import pytest
@@ -10,6 +11,7 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from relay.auth.middleware import (
+    _is_public,
     auth_middleware,
     require_role,
     require_tier,
@@ -19,6 +21,7 @@ from relay.auth.tokens import (
     SessionTokenPayload,
     create_account_token,
     create_session_token,
+    create_test_session_token,
     decode_token,
 )
 from relay.config import settings
@@ -28,6 +31,7 @@ from relay.middleware.rate_limit import (
     _buckets,
     _evict_stale,
     _get_rate_limit_key,
+    _is_exempt,
     clear_buckets,
 )
 
@@ -320,3 +324,183 @@ class TestRateLimiterEviction:
 
         # All stale buckets should be gone, only the new request's bucket remains
         assert len(_buckets) <= 2  # trigger + maybe one more
+
+
+# ---------------------------------------------------------------------------
+# Path normalization (Issue #3 fix)
+# ---------------------------------------------------------------------------
+
+
+class TestPathNormalization:
+    """Verify trailing-slash and prefix matching for public paths."""
+
+    def test_health_exact_is_public(self) -> None:
+        assert _is_public("/health") is True
+
+    def test_health_trailing_slash_is_public(self) -> None:
+        assert _is_public("/health/") is True
+
+    def test_docs_exact_is_public(self) -> None:
+        assert _is_public("/docs") is True
+
+    def test_docs_sub_path_is_public(self) -> None:
+        assert _is_public("/docs/oauth2-redirect") is True
+
+    def test_redoc_trailing_slash_is_public(self) -> None:
+        assert _is_public("/redoc/") is True
+
+    def test_openapi_json_is_public(self) -> None:
+        assert _is_public("/openapi.json") is True
+
+    def test_me_is_not_public(self) -> None:
+        assert _is_public("/me") is False
+
+    def test_session_is_not_public(self) -> None:
+        assert _is_public("/session/start") is False
+
+    def test_rate_limit_exempt_matches_auth_public(self) -> None:
+        """Rate limiter exempt paths should mirror auth public paths."""
+        assert _is_exempt("/health") is True
+        assert _is_exempt("/health/") is True
+        assert _is_exempt("/docs/oauth2-redirect") is True
+        assert _is_exempt("/me") is False
+
+
+# ---------------------------------------------------------------------------
+# WebSocket auth flow tests
+# ---------------------------------------------------------------------------
+
+
+class TestWebSocketAuth:
+    """Test the WebSocket _authenticate() flow via the TestClient WebSocket.
+
+    Uses db_client fixture to provide an in-memory DB so _send_recovery_data()
+    doesn't hang waiting for a real database connection.
+    """
+
+    def test_ws_valid_session_token_connects(self, db_client) -> None:
+        """A valid session token should authenticate without an error response."""
+        token = create_test_session_token(
+            player_id="ws_player",
+            world_id="inkglass_dark",
+            session_id="ws_sess_1",
+            tier=1,
+            role="player",
+            mode="solo",
+        )
+        with db_client.websocket_connect("/dialogue") as ws:
+            ws.send_json({"type": "auth", "token": token})
+            # After auth, server sends recovery data then waits. Send heartbeat.
+            ws.send_json({"type": "heartbeat"})
+            msg = ws.receive_json()
+            # Should NOT be an auth error
+            assert msg.get("type") != "error" or msg.get("code") not in ("unauthorized", "protocol_error")
+
+    def test_ws_missing_auth_message_returns_error(self, db_client) -> None:
+        with db_client.websocket_connect("/dialogue") as ws:
+            ws.send_json({"type": "rp_turn", "content": "hello"})
+            msg = ws.receive_json()
+            assert msg["type"] == "error"
+            assert msg["code"] == "protocol_error"
+            assert "auth" in msg["message"].lower()
+
+    def test_ws_expired_token_returns_error(self, db_client) -> None:
+        now = datetime.now(UTC)
+        raw = {
+            "player_id": "ws_player",
+            "world_id": "inkglass_dark",
+            "session_id": "ws_sess_2",
+            "tier": 1,
+            "role": "player",
+            "mode": "solo",
+            "token_type": "session",
+            "iat": now - timedelta(hours=13),
+            "exp": now - timedelta(hours=1),
+        }
+        expired_token = jwt.encode(raw, settings.jwt_secret, algorithm="HS256")
+        with db_client.websocket_connect("/dialogue") as ws:
+            ws.send_json({"type": "auth", "token": expired_token})
+            msg = ws.receive_json()
+            assert msg["type"] == "error"
+            assert msg["code"] == "unauthorized"
+
+    def test_ws_account_token_rejected(self, db_client) -> None:
+        """Dialogue requires session token — account tokens should be rejected."""
+        token = create_account_token(player_id="ws_player", tier=1)
+        with db_client.websocket_connect("/dialogue") as ws:
+            ws.send_json({"type": "auth", "token": token})
+            msg = ws.receive_json()
+            assert msg["type"] == "error"
+            assert msg["code"] == "unauthorized"
+            assert "session token" in msg["message"].lower()
+
+    def test_ws_malformed_json_returns_error(self, db_client) -> None:
+        with db_client.websocket_connect("/dialogue") as ws:
+            ws.send_text("not valid json at all")
+            msg = ws.receive_json()
+            assert msg["type"] == "error"
+            assert msg["code"] == "protocol_error"
+
+    def test_ws_invalid_token_string_returns_error(self, db_client) -> None:
+        with db_client.websocket_connect("/dialogue") as ws:
+            ws.send_json({"type": "auth", "token": "not.a.real.jwt"})
+            msg = ws.receive_json()
+            assert msg["type"] == "error"
+            assert msg["code"] == "unauthorized"
+
+
+# ---------------------------------------------------------------------------
+# Config secret validation (Issue #1 fix)
+# ---------------------------------------------------------------------------
+
+
+class TestConfigSecretValidation:
+    def test_empty_jwt_secret_gets_dev_fallback(self) -> None:
+        """In development, empty jwt_secret should get a dev fallback (not empty string)."""
+        from relay.config import Settings
+
+        s = Settings(
+            ANTHROPIC_API_KEY="test",
+            INKGLASS_JWT_SECRET="",
+            ADMIN_SECRET="test",
+            ENVIRONMENT="development",
+        )
+        assert s.jwt_secret != ""
+        assert "dev-only" in s.jwt_secret
+
+    def test_empty_jwt_secret_raises_in_staging(self) -> None:
+        """In staging, empty jwt_secret must raise."""
+        from relay.config import Settings
+
+        with pytest.raises(ValueError, match="INKGLASS_JWT_SECRET"):
+            Settings(
+                ANTHROPIC_API_KEY="test",
+                INKGLASS_JWT_SECRET="",
+                ADMIN_SECRET="test",
+                ENVIRONMENT="staging",
+            )
+
+    def test_empty_jwt_secret_raises_in_production(self) -> None:
+        """In production, empty jwt_secret must raise."""
+        from relay.config import Settings
+
+        with pytest.raises(ValueError, match="INKGLASS_JWT_SECRET"):
+            Settings(
+                ANTHROPIC_API_KEY="test",
+                INKGLASS_JWT_SECRET="",
+                ADMIN_SECRET="test",
+                ENVIRONMENT="production",
+            )
+
+    def test_valid_jwt_secret_passes_all_environments(self) -> None:
+        """A provided jwt_secret should work in any environment."""
+        from relay.config import Settings
+
+        for env in ("development", "staging", "production"):
+            s = Settings(
+                ANTHROPIC_API_KEY="test",
+                INKGLASS_JWT_SECRET="real-secret-32-bytes-minimum!!!!!",
+                ADMIN_SECRET="test",
+                ENVIRONMENT=env,
+            )
+            assert s.jwt_secret == "real-secret-32-bytes-minimum!!!!!"
