@@ -117,6 +117,8 @@ class ConditionDef:
         "grants_advantage_to_attackers",
         "id",
         "incapacitated",
+        "range_dependent_advantage",
+        "requires_source_visible",
         "rider_conditions",
         "speed_zero",
     )
@@ -135,6 +137,8 @@ class ConditionDef:
         auto_fail_dexterity_saves: bool = False,
         speed_zero: bool = False,
         incapacitated: bool = False,
+        range_dependent_advantage: str | None = None,
+        requires_source_visible: bool = False,
     ) -> None:
         self.id = condition_id
         self.rider_conditions = rider_conditions
@@ -147,6 +151,8 @@ class ConditionDef:
         self.auto_fail_dexterity_saves = auto_fail_dexterity_saves
         self.speed_zero = speed_zero
         self.incapacitated = incapacitated
+        self.range_dependent_advantage = range_dependent_advantage
+        self.requires_source_visible = requires_source_visible
 
 
 CONDITIONS: dict[str, ConditionDef] = {
@@ -161,6 +167,7 @@ CONDITIONS: dict[str, ConditionDef] = {
         "frightened",
         disadvantage_on_all_checks=True,
         disadvantage_on_attacks=True,
+        requires_source_visible=True,
     ),
     "grappled": ConditionDef("grappled", speed_zero=True),
     "incapacitated": ConditionDef("incapacitated", incapacitated=True),
@@ -190,6 +197,7 @@ CONDITIONS: dict[str, ConditionDef] = {
         "prone",
         disadvantage_on_attacks=True,
         grants_advantage_to_attackers=True,
+        range_dependent_advantage="melee_only",
     ),
     "restrained": ConditionDef(
         "restrained",

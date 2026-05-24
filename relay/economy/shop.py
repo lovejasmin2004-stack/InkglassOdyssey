@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.attributes import flag_modified
 
 from relay.economy.pricing import (
     DEFAULT_SELL_BACK_RATIO,
@@ -25,6 +24,7 @@ from relay.economy.pricing import (
 )
 from relay.economy.wallet import credit, debit
 from relay.factions.reputation import resolve_tier
+from relay.handlers.inventory import InventoryHandler
 from relay.models import Character
 from relay.schemas import Item, NpcPersonality, ShopInventoryEntry
 
@@ -326,10 +326,10 @@ async def buy_item(
     )
 
     # Add to character inventory
-    inventory = list(character.inventory or [])
-    _add_to_inventory(inventory, item, quantity)
-    character.inventory = inventory
-    flag_modified(character, "inventory")
+    inv = InventoryHandler(character)
+    binding = "bound" if item.binding == "bind_on_acquire" else "unbound"
+    inv.add_item(item.id, quantity, binding_state=binding)
+    inv.persist()
 
     logger.info(
         "Buy transaction complete",
@@ -394,8 +394,8 @@ async def sell_item(
         raise HostileFactionError(f"NPC '{npc.id}' refuses to trade (hostile faction)")
 
     # Check character has the item (prefer unbound stacks for selling)
-    inventory = list(character.inventory or [])
-    inv_entry = _find_inventory_entry(inventory, item.id, prefer_unbound=True)
+    inv = InventoryHandler(character)
+    inv_entry = inv.find(item.id, prefer_unbound=True)
     if inv_entry is None or inv_entry.get("quantity", 0) < quantity:
         raise ItemNotInInventoryError(f"Character does not have {quantity}x '{item.id}'")
 
@@ -446,9 +446,8 @@ async def sell_item(
     )
 
     # Remove from inventory
-    _remove_from_inventory(inventory, item.id, quantity)
-    character.inventory = inventory
-    flag_modified(character, "inventory")
+    inv.remove_item(item.id, quantity)
+    inv.persist()
 
     logger.info(
         "Sell transaction complete",

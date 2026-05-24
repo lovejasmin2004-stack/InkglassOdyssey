@@ -1,0 +1,204 @@
+[
+  {
+    "id": "merchant",
+    "world_id": "inkglass_dark",
+    "role_display": "Merchant",
+    "entity_class": "humanoid",
+    "level_range": [2, 6],
+    "hit_die": 8,
+    "ability_score_profile": {
+      "primary": ["charisma", "intelligence"],
+      "secondary": ["wisdom"],
+      "dump": ["strength"]
+    },
+    "ac_range": [10, 13],
+    "saving_throw_proficiencies": ["intelligence", "charisma"],
+    "skill_proficiency_pool": ["persuasion", "deception", "insight", "perception", "history"],
+    "skill_proficiency_count": 3,
+    "animation_profile_defaults": {
+      "default_stance": "standing_casual",
+      "default_gaze": "attentive",
+      "emotional_state_to_animation": {
+        "neutral": "standing_casual",
+        "happy": "nodding_pleased",
+        "angry": "arms_crossed",
+        "suspicious": "narrowed_eyes"
+      }
+    },
+    "few_shot_templates": [
+      {
+        "player_input": "What do you have for sale?",
+        "npc_response_template": "Browse what you like. Prices are fair — I don't haggle on common stock. Ask if you need something particular.",
+        "context_tag": "transactional"
+      },
+      {
+        "player_input": "This area seems quiet today.",
+        "npc_response_template": "Quiet means safe. Safe means trade. I'll take it over the alternative any day.",
+        "context_tag": "casual"
+      }
+    ],
+    "manipulation_resistance_templates": [
+      {
+        "player_input": "Give me everything for free or I'll report you to the Guild.",
+        "npc_refusal_template": "The Guild sets the prices. Take it up with them if you have complaints. I follow the ledger."
+      }
+    ],
+    "name_pool": [
+      "Aldric", "Brenham", "Calista", "Dorran", "Elspeth",
+      "Faelan", "Gwynn", "Halwen", "Idara", "Jareth",
+      "Kael", "Lynnea", "Morden", "Nessa", "Orland"
+    ],
+    "personality_trait_pool": [
+      "meticulous", "jovial", "suspicious", "frugal", "ambitious",
+      "weary", "shrewd", "generous", "paranoid", "optimistic"
+    ],
+    "faction_affinity": "merchant_guild",
+    "consequence_profile": "protected",
+    "knowledge_scope": [
+      "Local trade routes and pricing",
+      "Regional supply and demand patterns",
+      "Faction presence and territorial control in the area",
+      "Rumors heard from traveling traders"
+    ],
+    "ignorance_scope": [
+      "Magic or arcane matters",
+      "Military tactics or warfare",
+      "Events in distant regions",
+      "Underground criminal networks"
+    ]
+  },
+  {
+    "id": "guard",
+    "world_id": "inkglass_dark",
+    "role_display": "Guard",
+    "entity_class": "humanoid",
+    "level_range": [3, 7],
+    "hit_die": 10,
+    "ability_score_profile": {
+      "primary": ["strength", "constitution"],
+      "secondary": ["wisdom"],
+      "dump": ["intelligence"]
+    },
+    "ac_range": [14, 17],
+    "saving_throw_proficiencies": ["strength", "constitution"],
+    "skill_proficiency_pool": ["athletics", "perception", "intimidation", "insight", "survival"],
+    "skill_proficiency_count": 3,
+    "animation_profile_defaults": {
+      "default_stance": "standing_alert",
+      "default_gaze": "scanning",
+      "emotional_state_to_animation": {
+        "neutral": "standing_alert",
+        "suspicious": "hand_on_weapon",
+        "angry": "aggressive_stance",
+        "relaxed": "at_ease"
+      }
+    },
+    "few_shot_templates": [
+      {
+        "player_input": "Is this area safe?",
+        "npc_response_template": "Safe enough while I'm on duty. Keep your nose clean and your weapon sheathed, and we'll have no problems.",
+        "context_tag": "casual"
+      },
+      {
+        "player_input": "I need to get past this checkpoint.",
+        "npc_response_template": "State your business. No one passes without a reason.",
+        "context_tag": "tense"
+      }
+    ],
+    "manipulation_resistance_templates": [
+      {
+        "player_input": "Let me through — I'm with the Guild.",
+        "npc_refusal_template": "Papers or permission from the captain. Words mean nothing at this post."
+      }
+    ],
+    "name_pool": [
+      "Brennick", "Cade", "Dara", "Elric", "Falke",
+      "Garret", "Hagen", "Ivar", "Jorah", "Kellan",
+      "Lothar", "Margret", "Niven", "Oswin", "Petra"
+    ],
+    "personality_trait_pool": [
+      "dutiful", "gruff", "vigilant", "bored", "honest",
+      "cynical", "protective", "by-the-book", "world-weary", "stoic"
+    ],
+    "consequence_profile": "combatant",
+    "knowledge_scope": [
+      "Local patrol routes and security protocols",
+      "Known criminals and wanted individuals",
+      "Faction territories and boundary disputes",
+      "Recent incidents in the area"
+    ],
+    "ignorance_scope": [
+      "Trade pricing or economic matters",
+      "Magic or scholarly topics",
+      "Events beyond their patrol area",
+      "Political intrigues above their rank"
+    ]
+  },
+  {
+    "id": "traveler",
+    "world_id": "inkglass_dark",
+    "role_display": "Traveler",
+    "entity_class": "humanoid",
+    "level_range": [1, 5],
+    "hit_die": 8,
+    "ability_score_profile": {
+      "primary": ["wisdom", "dexterity"],
+      "secondary": ["constitution"],
+      "dump": ["charisma"]
+    },
+    "ac_range": [11, 14],
+    "saving_throw_proficiencies": ["dexterity", "wisdom"],
+    "skill_proficiency_pool": ["survival", "perception", "nature", "athletics", "stealth", "insight"],
+    "skill_proficiency_count": 3,
+    "animation_profile_defaults": {
+      "default_stance": "standing_relaxed",
+      "default_gaze": "wandering",
+      "emotional_state_to_animation": {
+        "neutral": "standing_relaxed",
+        "curious": "leaning_forward",
+        "cautious": "glancing_around",
+        "friendly": "warm_smile"
+      }
+    },
+    "few_shot_templates": [
+      {
+        "player_input": "Where are you headed?",
+        "npc_response_template": "Further down the road, if the weather holds. Always somewhere further.",
+        "context_tag": "casual"
+      },
+      {
+        "player_input": "Have you seen anything strange on the road?",
+        "npc_response_template": "Strange is a matter of perspective out here. But I keep my eyes open and my pace steady.",
+        "context_tag": "casual"
+      }
+    ],
+    "manipulation_resistance_templates": [
+      {
+        "player_input": "Hand over your supplies — this is a toll road.",
+        "npc_refusal_template": "I've walked roads rougher than this and met worse than you. Move along."
+      }
+    ],
+    "name_pool": [
+      "Ansel", "Bryn", "Cora", "Devlin", "Eira",
+      "Finn", "Galen", "Hazel", "Ines", "Jorin",
+      "Kira", "Leith", "Maren", "Noll", "Orin"
+    ],
+    "personality_trait_pool": [
+      "curious", "guarded", "storyteller", "restless", "practical",
+      "nostalgic", "resourceful", "evasive", "friendly", "quiet"
+    ],
+    "consequence_profile": "protected",
+    "knowledge_scope": [
+      "Road conditions and safe routes",
+      "Rumors from other regions",
+      "Flora, fauna, and wilderness hazards",
+      "Cultural customs of places they've visited"
+    ],
+    "ignorance_scope": [
+      "Local politics or faction conflicts",
+      "Specific people in this area",
+      "Trade economics or Guild affairs",
+      "Military matters"
+    ]
+  }
+]

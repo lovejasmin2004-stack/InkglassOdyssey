@@ -1,0 +1,111 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "event_arc_instance",
+    "title": "EventArcInstance",
+    "description": "A concrete instantiation of an event arc blueprint for a specific character playthrough. Stores selected phases, assigned NPCs, and per-phase status. Persistent across sessions. Design doc: docs/design_proposals.md §4.",
+    "type": "object",
+    "required": [
+        "id",
+        "blueprint_id",
+        "world_id",
+        "character_id",
+        "origin",
+        "status",
+        "current_phase_index",
+        "phases",
+        "candidates"
+    ],
+    "additionalProperties": false,
+    "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "blueprint_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "References the blueprint this instance was generated from."
+        },
+        "world_id": {"type": "string", "minLength": 1},
+        "character_id": {"type": "string", "minLength": 1},
+        "origin": {
+            "type": "string",
+            "enum": ["authored", "custom"],
+            "description": "authored = system-generated from blueprint, custom = player-assembled (§5)."
+        },
+        "status": {
+            "type": "string",
+            "enum": ["active", "completed", "failed", "abandoned"],
+            "description": "Overall arc status."
+        },
+        "current_phase_index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Index into the phases array indicating the active phase."
+        },
+        "phases": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["phase_id", "status"],
+                "additionalProperties": false,
+                "properties": {
+                    "phase_id": {"type": "string", "minLength": 1},
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "active", "passed", "failed"]
+                    },
+                    "examiner_npc_id": {
+                        "type": ["string", "null"],
+                        "description": "NPC overseeing this phase (assigned from examiner_pool)."
+                    },
+                    "terrain": {
+                        "type": ["string", "null"],
+                        "description": "Selected terrain for this phase."
+                    },
+                    "hazards": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Active hazards for this phase."
+                    },
+                    "result_summary": {
+                        "type": ["string", "null"],
+                        "description": "Brief narrative summary after phase completion."
+                    }
+                }
+            },
+            "minItems": 1
+        },
+        "candidates": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["npc_id", "is_anchor", "status"],
+                "additionalProperties": false,
+                "properties": {
+                    "npc_id": {"type": "string", "minLength": 1},
+                    "is_anchor": {
+                        "type": "boolean",
+                        "description": "True if this is an authored anchor NPC."
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["active", "eliminated", "withdrawn"]
+                    },
+                    "relationship_score": {
+                        "type": "integer",
+                        "minimum": -100,
+                        "maximum": 100,
+                        "description": "Player's relationship with this candidate within this arc."
+                    },
+                    "eliminated_at_phase": {
+                        "type": ["integer", "null"],
+                        "description": "Phase index where this candidate was eliminated."
+                    }
+                }
+            },
+            "description": "All NPCs participating in this arc instance."
+        },
+        "session_id": {
+            "type": ["string", "null"],
+            "description": "Current session ID if the arc is active."
+        }
+    }
+}

@@ -330,11 +330,12 @@ def get_attack_modifiers(
         if cdef is None:
             continue
         if cdef.disadvantage_on_attacks:
-            if cid == "frightened" and not source_visible:
+            if cdef.requires_source_visible and not source_visible:
                 continue
             has_disadvantage = True
 
-    if exhaustion_level >= 3:
+    edef = exhaustion_def(exhaustion_level) if exhaustion_level >= 1 else None
+    if edef and edef.disadvantage_on_attacks:
         has_disadvantage = True
 
     return {"attack_disadvantage": has_disadvantage}
@@ -347,7 +348,8 @@ def get_defense_modifiers(
 ) -> dict:
     """Determine if attackers get advantage/disadvantage against this target.
 
-    Prone is range-dependent: melee advantage, ranged disadvantage.
+    Conditions with ``range_dependent_advantage`` grant advantage only at the
+    specified range, and disadvantage at all other ranges.
     """
     attackers_have_advantage = False
     attackers_have_disadvantage = False
@@ -357,13 +359,16 @@ def get_defense_modifiers(
         cdef = _condition_def(cid)
         if cdef is None:
             continue
-        if cid == "prone":
-            if attack_range == "melee":
-                attackers_have_advantage = True
+        if cdef.grants_advantage_to_attackers:
+            if cdef.range_dependent_advantage is not None:
+                if cdef.range_dependent_advantage == "melee_only" and attack_range == "melee":
+                    attackers_have_advantage = True
+                elif cdef.range_dependent_advantage == "ranged_only" and attack_range == "ranged":
+                    attackers_have_advantage = True
+                else:
+                    attackers_have_disadvantage = True
             else:
-                attackers_have_disadvantage = True
-        elif cdef.grants_advantage_to_attackers:
-            attackers_have_advantage = True
+                attackers_have_advantage = True
 
     return {
         "attackers_have_advantage": attackers_have_advantage,
@@ -392,7 +397,8 @@ def get_save_modifiers(
         if save_type in cdef.disadvantage_on_saves:
             has_disadvantage = True
 
-    if exhaustion_level >= 3:
+    edef = exhaustion_def(exhaustion_level) if exhaustion_level >= 1 else None
+    if edef and save_type in edef.disadvantage_on_saves:
         has_disadvantage = True
 
     return {"auto_fail": auto_fail, "save_disadvantage": has_disadvantage}

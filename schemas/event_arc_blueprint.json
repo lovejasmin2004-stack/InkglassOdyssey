@@ -1,0 +1,222 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "event_arc_blueprint",
+    "title": "EventArcBlueprint",
+    "description": "Authored skeleton for a randomized event arc. Defines phase pools, selection rules, NPC rosters, and constraints. The arc instantiator picks phases per-playthrough. Design doc: docs/design_proposals.md §4.",
+    "type": "object",
+    "required": [
+        "id",
+        "world_id",
+        "name",
+        "description",
+        "region_id",
+        "level_range",
+        "phase_count_range",
+        "phase_pool",
+        "selection_rules",
+        "npc_roster",
+        "completion_rewards"
+    ],
+    "additionalProperties": false,
+    "properties": {
+        "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique blueprint ID, e.g. 'guild_trials', 'hunter_exam'."
+        },
+        "world_id": {"type": "string", "minLength": 1},
+        "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Human-readable arc name shown to players."
+        },
+        "description": {"type": "string"},
+        "region_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Region where this arc takes place."
+        },
+        "level_range": {
+            "type": "array",
+            "items": {"type": "integer", "minimum": 1, "maximum": 20},
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "[min_level, max_level] for participant eligibility."
+        },
+        "phase_count_range": {
+            "type": "array",
+            "items": {"type": "integer", "minimum": 1, "maximum": 10},
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "[min_phases, max_phases] — instantiator picks a count within this range."
+        },
+        "phase_pool": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["phase_id", "name", "category", "description", "checks"],
+                "additionalProperties": false,
+                "properties": {
+                    "phase_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Unique phase template ID within this blueprint."
+                    },
+                    "name": {"type": "string", "minLength": 1},
+                    "category": {
+                        "type": "string",
+                        "enum": ["combat", "social", "exploration", "puzzle", "endurance", "stealth"],
+                        "description": "Category for selection rule enforcement."
+                    },
+                    "description": {"type": "string"},
+                    "checks": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["type", "dc"],
+                            "additionalProperties": false,
+                            "properties": {
+                                "type": {"type": "string", "minLength": 1},
+                                "dc": {"type": "integer", "minimum": 1, "maximum": 30}
+                            }
+                        },
+                        "minItems": 1,
+                        "description": "Checks involved in this phase."
+                    },
+                    "terrain_pool": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Possible terrain settings for this phase."
+                    },
+                    "hazard_pool": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Possible hazards that may appear."
+                    },
+                    "examiner_pool": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "NPC IDs eligible to oversee this phase."
+                    },
+                    "fail_condition": {
+                        "type": "string",
+                        "description": "What constitutes failure in this phase."
+                    },
+                    "narrative_beats": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Key story beats the narrative director should reference."
+                    }
+                }
+            },
+            "minItems": 3,
+            "description": "All possible phases (typically 6-10). The instantiator picks a subset."
+        },
+        "selection_rules": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "must_include_categories": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "At least one phase from each listed category must appear."
+                },
+                "final_phase_categories": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "The final phase must be from one of these categories."
+                },
+                "max_consecutive_same_category": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "description": "No more than N phases of the same category in a row."
+                },
+                "excluded_combinations": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 2,
+                        "maxItems": 2
+                    },
+                    "description": "Pairs of phase_ids that cannot appear in the same instance."
+                }
+            },
+            "description": "Constraints governing phase selection and ordering."
+        },
+        "npc_roster": {
+            "type": "object",
+            "required": ["anchor_npcs"],
+            "additionalProperties": false,
+            "properties": {
+                "anchor_npcs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Authored NPC IDs that always appear in every instance."
+                },
+                "generated_count_range": {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 0, "maximum": 50},
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "description": "[min, max] background NPCs generated from templates."
+                },
+                "generated_template_roles": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Template role IDs to use for generating background NPCs."
+                }
+            },
+            "description": "NPC roster configuration — anchors always appear, generated fill background."
+        },
+        "prerequisites": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "faction_requirements": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "uniqueItems": true
+                },
+                "quest_requirements": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "uniqueItems": true
+                },
+                "min_relationship_with_npc": {"type": ["integer", "null"]}
+            }
+        },
+        "completion_rewards": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "companion_unlocked": {"type": ["string", "null"]},
+                "faction_change": {
+                    "oneOf": [
+                        {"type": "null"},
+                        {
+                            "type": "object",
+                            "required": ["faction_id", "amount"],
+                            "additionalProperties": false,
+                            "properties": {
+                                "faction_id": {"type": "string", "minLength": 1},
+                                "amount": {"type": "integer", "minimum": -100, "maximum": 100}
+                            }
+                        }
+                    ]
+                },
+                "items": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "uniqueItems": true
+                }
+            }
+        },
+        "failure_handling": {
+            "type": "string",
+            "enum": ["conditional_pass", "retry_next_cycle", "story_branch"],
+            "description": "How failure is handled narratively. Failure is never game over."
+        }
+    }
+}

@@ -239,3 +239,263 @@ class TransactionLog(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class StateChangeLog(Base):
+    """Immutable log of mechanical state changes (combat, conditions, companions).
+
+    Extends the audit trail pattern from TransactionLog (economy) and
+    FactionStandingLog (factions) to the remaining gap areas: HP mutations,
+    condition applications, exhaustion changes, death state transitions,
+    companion state changes, and rest effects.
+    """
+
+    __tablename__ = "state_change_log"
+    __table_args__ = (sa.Index("ix_scl_char_type_created", "character_id", "change_type", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    character_id: Mapped[str] = mapped_column(String, ForeignKey("characters.id"), nullable=False, index=True)
+    session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # hp_change | condition_add | condition_remove | condition_expire |
+    # exhaustion_change | death_state | companion_state | rest |
+    # faction_standing_change | relationship_change | world_flag_set
+    change_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+
+    # What triggered this change
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    source_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    reason: Mapped[str] = mapped_column(String, nullable=False, default="")
+
+    # Numeric delta for quick queries (negative = damage, positive = healing/gain)
+    delta: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    old_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    new_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Optional references
+    npc_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    condition_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    damage_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    rest_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    field: Mapped[str | None] = mapped_column(String, nullable=True)
+    faction_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    flag: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class NpcInstanceState(Base):
+    """Per-player NPC state tracking for the consequence system.
+
+    Separate from NPC personality files — tracks how *this player's* actions
+    have changed an NPC's disposition, status, and flags.  Created lazily on
+    first meaningful interaction (attack, theft, quest completion) rather than
+    for every NPC the player meets.
+
+    Design doc: docs/design_proposals.md §7 (Consequence System)
+    """
+
+    __tablename__ = "npc_instance_state"
+    __table_args__ = (
+        sa.UniqueConstraint("character_id", "npc_id", name="uq_nis_char_npc"),
+        sa.Index("ix_nis_character_id", "character_id"),
+        sa.Index("ix_nis_npc_id", "npc_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    character_id: Mapped[str] = mapped_column(String, ForeignKey("characters.id"), nullable=False)
+    npc_id: Mapped[str] = mapped_column(String, nullable=False)
+    world_id: Mapped[str] = mapped_column(String, nullable=False)
+
+    # alive | injured | fled | dead | defeated
+    status: Mapped[str] = mapped_column(String, nullable=False, default="alive")
+
+    # Current HP — only set once combat or damage has occurred. None = untracked.
+    hp_current: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Override the base relationship score for this NPC specifically.
+    # When set, the prompt builder uses this instead of char.relationships[npc_id].
+    disposition_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Arbitrary flags: ["attacked_by_player", "seeking_revenge", "quest_ally"]
+    flags: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
+    # Brief summary of last significant interaction (for prompt context)
+    last_interaction_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+
+class NarrativeThread(Base):
+    """Lightweight narrative thread tracking (design_proposals.md §6).
+
+    Layer 2 of the Three-Layer Narrative Model.  The system notices
+    recurring interests, commitments, and revelations during freeform RP
+    and tracks them as soft signals.  The narrative director reads active
+    threads when constructing scene context and writes director_signal
+    hints so the world feels responsive.
+
+    Threads are per-character, per-world.  They accumulate mention_count
+    across scenes and sessions.  Status transitions:
+      active → resolved  (thread concluded narratively)
+      active → dormant   (player lost interest / long gap)
+      dormant → active   (player re-engages)
+    """
+
+    __tablename__ = "narrative_threads"
+    __table_args__ = (
+        sa.UniqueConstraint("character_id", "thread_key", name="uq_nt_char_thread"),
+        sa.Index("ix_nt_character_status", "character_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    character_id: Mapped[str] = mapped_column(String, ForeignKey("characters.id"), nullable=False)
+    world_id: Mapped[str] = mapped_column(String, nullable=False)
+
+    # Short snake_case key, e.g. "missing_brother", "guild_corruption"
+    thread_key: Mapped[str] = mapped_column(String, nullable=False)
+
+    # commitment | interest | revelation | tension
+    signal_type: Mapped[str] = mapped_column(String, nullable=False)
+
+    # Human-readable summary of the thread's current state
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # NPCs and regions involved (for director nudge targeting)
+    related_npcs: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    related_regions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
+    # How many turns have mentioned this thread
+    mention_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    # active | resolved | dormant
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active")
+
+    # Session tracking for recency
+    first_seen_session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_seen_session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+
+class EventArcInstanceRow(Base):
+    """Per-character event arc instance (design_proposals.md §4).
+
+    Stores the concrete instantiation of an event arc blueprint:
+    selected phases, assigned NPCs, per-phase status.  Persistent
+    across sessions — the narrative director reads the active arc
+    to know phase context, upcoming beats, and pacing.
+
+    The ``phases`` and ``candidates`` columns store JSON arrays
+    matching the EventArcInstance Pydantic model's nested structure.
+    """
+
+    __tablename__ = "event_arc_instances"
+    __table_args__ = (
+        sa.UniqueConstraint("character_id", "blueprint_id", "id", name="uq_eai_char_bp_id"),
+        sa.Index("ix_eai_character_status", "character_id", "status"),
+        sa.Index("ix_eai_world_id", "world_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    blueprint_id: Mapped[str] = mapped_column(String, nullable=False)
+    world_id: Mapped[str] = mapped_column(String, nullable=False)
+    character_id: Mapped[str] = mapped_column(String, ForeignKey("characters.id"), nullable=False)
+
+    # "authored" (system-generated from blueprint) or "custom" (player-assembled, §5)
+    origin: Mapped[str] = mapped_column(String, nullable=False, default="authored")
+
+    # "active" | "completed" | "failed" | "abandoned"
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active")
+
+    # Index into the phases array
+    current_phase_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # JSON array of phase dicts: [{phase_id, status, examiner_npc_id, terrain, hazards, result_summary}]
+    phases: Mapped[list] = mapped_column(JSON, nullable=False)
+
+    # JSON array of candidate dicts: [{npc_id, is_anchor, status, relationship_score, eliminated_at_phase}]
+    candidates: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
+    # Session that most recently advanced this arc
+    session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+
+class WorldFlag(Base):
+    """Per-character world flags for the consequence and narrative systems.
+
+    Boolean or string flags tracking world-state changes caused by player
+    actions: wanted status, bounty active, quest milestones, region locks.
+    Read by the narrative director escalation rules and prompt builder.
+
+    Design doc: docs/design_proposals.md §7 (Consequence System)
+    """
+
+    __tablename__ = "world_flags"
+    __table_args__ = (
+        sa.UniqueConstraint("character_id", "flag", name="uq_wf_char_flag"),
+        sa.Index("ix_wf_character_id", "character_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    character_id: Mapped[str] = mapped_column(String, ForeignKey("characters.id"), nullable=False)
+
+    # Flag key, e.g. "wanted_in:market_district", "bounty_active", "guild_trial_passed"
+    flag: Mapped[str] = mapped_column(String, nullable=False)
+
+    # Flag value — "true" for booleans, or a string for richer state
+    value: Mapped[str] = mapped_column(String, nullable=False, default="true")
+
+    # Why this flag was set
+    reason: Mapped[str] = mapped_column(String, nullable=False, default="")
+
+    # What triggered it: consequence | quest | scenario | admin | narrative_director
+    source: Mapped[str] = mapped_column(String, nullable=False, default="consequence")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+
+class CharacterPreferences(Base):
+    """Per-character starting scenario preferences (design_proposals.md §3).
+
+    Stored when the player enters a world.  The backstory blurb, story
+    interests, and topics to avoid are injected into the prompt.  The
+    four tuning knobs (content_rating, narrative_pace, companion_interest,
+    exploration_style) adjust narrative director behaviour.
+
+    One row per character.  Created on first world entry, updated via
+    PATCH /character/{id}/preferences.
+    """
+
+    __tablename__ = "character_preferences"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    character_id: Mapped[str] = mapped_column(
+        String, ForeignKey("characters.id"), nullable=False, unique=True, index=True
+    )
+    world_id: Mapped[str] = mapped_column(String, nullable=False)
+
+    # Player-written backstory blurb (up to 2000 chars)
+    backstory_blurb: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    # JSON arrays of tag strings
+    story_interests: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    topics_to_avoid: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
+    # Tuning knobs
+    content_rating: Mapped[str] = mapped_column(String, nullable=False, default="moderate")
+    narrative_pace: Mapped[str] = mapped_column(String, nullable=False, default="moderate")
+    companion_interest: Mapped[str] = mapped_column(String, nullable=False, default="moderate")
+    exploration_style: Mapped[str] = mapped_column(String, nullable=False, default="balanced")
+
+    # Player's personal NPC notes (JSON: {npc_id: "note text"})
+    npc_notes: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)

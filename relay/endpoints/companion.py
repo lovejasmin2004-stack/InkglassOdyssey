@@ -23,14 +23,14 @@ from relay.companions.manager import (
     AlreadyRecruitedError,
     CompanionLimitError,
     ConditionNotMetError,
-    add_companion,
     create_companion_entry,
-    find_companion,
-    remove_companion,
     validate_recruitment,
 )
 from relay.database import get_db
 from relay.endpoints._helpers import load_character_owned
+from relay.handlers.companion import CompanionHandler
+from relay.mutations import CompanionStateChange
+from relay.state_log import log_companion_state
 
 logger = logging.getLogger(__name__)
 
@@ -121,8 +121,8 @@ async def post_recruit(
 ) -> RecruitResponse:
     """Recruit a companion NPC."""
     char = await load_character_owned(db, body.character_id, token.player_id)
+    handler = CompanionHandler(char)
 
-    companions = list(char.companions or [])
     relationships = dict(char.relationships or {})
     relationship_score = relationships.get(body.npc_id, 0)
 
@@ -131,7 +131,7 @@ async def post_recruit(
             npc_id=body.npc_id,
             companion_data=body.companion_data,
             relationship_score=relationship_score,
-            current_companions=companions,
+            current_companions=handler.all,
             max_active_companions=body.max_active_companions,
             world_flags=body.world_flags,
         )
@@ -173,9 +173,8 @@ async def post_recruit(
         companion_data=body.companion_data,
         npc_hp_max=body.npc_hp_max,
     )
-    companions = add_companion(companions, entry)
-    char.companions = companions
-    flag_modified(char, "companions")
+    handler.add(entry)
+    handler.persist()
 
     await db.commit()
 
@@ -200,17 +199,8 @@ async def post_combat_action(
 ) -> CombatActionResponse:
     """Resolve one automatic combat action for a companion."""
     char = await load_character_owned(db, body.character_id, token.player_id)
-    companions = list(char.companions or [])
-
-    comp = find_companion(companions, companion_id)
-    if not comp:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "companion_not_found",
-                "message": f"Companion {companion_id} not found",
-            },
-        )
+    handler = CompanionHandler(char)
+    comp = handler.find_or_raise(companion_id)
 
     action = resolve_companion_action(
         companion=comp,
@@ -231,18 +221,12 @@ async def post_incapacitate(
 ) -> IncapacitateResponse:
     """Process companion incapacitation (0 HP in combat)."""
     char = await load_character_owned(db, body.character_id, token.player_id)
-    companions = list(char.companions or [])
+    handler = CompanionHandler(char)
     relationships = dict(char.relationships or {})
 
-    comp = find_companion(companions, companion_id)
-    if not comp:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "companion_not_found",
-                "message": f"Companion {companion_id} not found",
-            },
-        )
+    comp = handler.find_or_raise(companion_id)
+    old_exhaustion = comp.get("exhaustion_level", 0)
+    old_strain = comp.get("loyalty_strain", 0)
 
     result = handle_incapacitation(
         companion=comp,
@@ -250,10 +234,29 @@ async def post_incapacitate(
         relationships=relationships,
     )
 
-    char.companions = companions
+    handler.mark_dirty()
+    handler.persist()
     char.relationships = relationships
-    flag_modified(char, "companions")
     flag_modified(char, "relationships")
+
+    await log_companion_state(db, CompanionStateChange(
+        character_id=char.id,
+        npc_id=companion_id,
+        field="exhaustion_level",
+        old_value=old_exhaustion,
+        new_value=result["exhaustion_level"],
+        source="incapacitation",
+        reason="companion reduced to 0 HP",
+    ))
+    await log_companion_state(db, CompanionStateChange(
+        character_id=char.id,
+        npc_id=companion_id,
+        field="loyalty_strain",
+        old_value=old_strain,
+        new_value=result["loyalty_strain"],
+        source="incapacitation",
+        reason="companion reduced to 0 HP",
+    ))
 
     await db.commit()
 
@@ -269,22 +272,13 @@ async def post_recover(
 ) -> dict:
     """Recover a companion after combat ends."""
     char = await load_character_owned(db, body.character_id, token.player_id)
-    companions = list(char.companions or [])
-
-    comp = find_companion(companions, companion_id)
-    if not comp:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "companion_not_found",
-                "message": f"Companion {companion_id} not found",
-            },
-        )
+    handler = CompanionHandler(char)
+    comp = handler.find_or_raise(companion_id)
 
     recover_after_combat(comp)
 
-    char.companions = companions
-    flag_modified(char, "companions")
+    handler.mark_dirty()
+    handler.persist()
     await db.commit()
 
     return {"npc_id": companion_id, "recovered": True, "companion_state": comp}
@@ -299,18 +293,10 @@ async def post_dismiss(
 ) -> DismissResponse:
     """Dismiss a companion (triggers farewell_template)."""
     char = await load_character_owned(db, body.character_id, token.player_id)
-    companions = list(char.companions or [])
+    handler = CompanionHandler(char)
     relationships = dict(char.relationships or {})
 
-    comp = find_companion(companions, companion_id)
-    if not comp:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "companion_not_found",
-                "message": f"Companion {companion_id} not found",
-            },
-        )
+    comp = handler.find_or_raise(companion_id)
 
     result = apply_dismissal(
         companion=comp,
@@ -318,10 +304,9 @@ async def post_dismiss(
         relationships=relationships,
     )
 
-    companions = remove_companion(companions, companion_id)
-    char.companions = companions
+    handler.remove(companion_id)
+    handler.persist()
     char.relationships = relationships
-    flag_modified(char, "companions")
     flag_modified(char, "relationships")
 
     await db.commit()
@@ -337,7 +322,7 @@ async def get_companions(
 ) -> CompanionsResponse:
     """Get all companions for a character."""
     char = await load_character_owned(db, character_id, token.player_id)
-    companions = char.companions or []
+    handler = CompanionHandler(char)
 
     return CompanionsResponse(
         companions=[
@@ -350,6 +335,6 @@ async def get_companions(
                 behavior_type=c.get("behavior_type", "defensive"),
                 active=c.get("active", True),
             )
-            for c in companions
+            for c in handler.all
         ]
     )

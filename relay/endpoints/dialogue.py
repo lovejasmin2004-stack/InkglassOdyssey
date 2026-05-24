@@ -34,8 +34,12 @@ import time
 import anthropic
 import jwt
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
+import relay.database as _db
 from relay.ai.chat_prompts import build_quickchat_system_prompt
+from relay.ai.game_context import GameStateContext, load_game_context, resolve_character_id
 from relay.ai.npc_loader import NpcLoadError, load_npc
 from relay.ai.rp_prompts import (
     build_analysis_messages,
@@ -45,6 +49,10 @@ from relay.ai.rp_prompts import (
 from relay.auth.tokens import SessionTokenPayload, decode_token
 from relay.checks.resolver import evaluate_passive_checks, resolve_check, validate_checks_batch
 from relay.config import settings
+from relay.consequences.evaluator import apply_world_mutations, validate_world_mutations
+from relay.consequences.profiles import filter_mutations_by_profile, resolve_profile
+from relay.models import Character
+from relay.narrative.threads import upsert_thread, validate_narrative_signals
 from relay.persistence.pending_turns import (
     MAX_RETRIES,
     complete_turn,
@@ -57,6 +65,7 @@ from relay.persistence.pending_turns import (
     mark_stale_turns,
     update_stage,
 )
+from relay.world.content_loader import load_faction_registry
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +85,10 @@ _MAX_SCENES_PER_CONNECTION = 10
 
 # When history exceeds this threshold, generate a memory summary (#R3).
 _MEMORY_SUMMARY_THRESHOLD = 30
+
+# Hard cap on automatic AI continuation chains (Phase 4 multi-NPC, Phase 2 director).
+# Lower than ai-gamemaster's 20 — streaming costs more per step.
+_MAX_AI_CHAIN_DEPTH = 10
 
 
 def _get_client() -> anthropic.AsyncAnthropic:
@@ -317,6 +330,7 @@ async def dialogue_ws(ws: WebSocket) -> None:
                         session_mode=session_mode,
                         pending_check_proposals=pending_check_proposals,
                         world_id=world_id,
+                        session_id=session_id,
                         analytics=connection_analytics,
                         triggered_passive_elements=triggered_passive_elements,
                     )
@@ -485,6 +499,7 @@ async def _handle_rp_turn(
     session_mode: str,
     pending_check_proposals: dict[str, dict],
     world_id: str = "",
+    session_id: str = "",
     analytics: dict | None = None,
     triggered_passive_elements: dict[str, list[str]] | None = None,
 ) -> None:
@@ -545,6 +560,21 @@ async def _handle_rp_turn(
             scene_state = loaded_state
     environmental_effects = scene_state.get("environmental_effects", [])
 
+    # Load game-state context from DB for prompt injection (design_proposals §9).
+    # Resolves character_id from session, then loads faction standing, relationship
+    # with this NPC, active companions, and scene atmosphere.
+    game_context: GameStateContext | None = None
+    character_id: str | None = None
+    if session_id:
+        character_id = await resolve_character_id(session_id)
+        if character_id:
+            game_context = await load_game_context(
+                character_id,
+                npc_id,
+                npc_faction_id=getattr(npc, "faction_id", None),
+                scene_state=scene_state,
+            )
+
     # === Persist pending turn before any processing (Invariant #12) ===
     # (#2) If this is a resumed turn, use the pre-created turn_id
     turn_id = msg.get("_resume_turn_id", "")
@@ -560,8 +590,8 @@ async def _handle_rp_turn(
 
     ws_turn_id = turn_id or f"rp_{int(time.time() * 1000)}"
 
-    # (#R1) System prompt as cache-control blocks (Tier 1: static)
-    system_prompt = build_rp_system_prompt(npc)
+    # (#R1) System prompt as cache-control blocks (Tier 1 + Tier 2)
+    system_prompt = build_rp_system_prompt(npc, game_context=game_context)
 
     # (#R3) Build NPC memory summary from trimmed history
     npc_memory = _build_npc_memory_summary(history)
@@ -576,7 +606,9 @@ async def _handle_rp_turn(
         if turn_id:
             await update_stage(turn_id, "analysis")
 
-        analysis_messages = build_analysis_messages(player_prose, _trim_history(history[:-1]))
+        analysis_messages = build_analysis_messages(
+            player_prose, _trim_history(history[:-1]), game_context=game_context
+        )
 
         analysis_response = await client.messages.create(
             model=_MODEL,
@@ -607,6 +639,8 @@ async def _handle_rp_turn(
                 "scene_changes": {},
                 "animation_directives": [],
                 "draft_response": fallback_text,
+                "narrative_signals": [],
+                "world_mutations": [],
             }
         logger.debug("Analysis response received", extra={"turn_id": ws_turn_id})
 
@@ -654,6 +688,9 @@ async def _handle_rp_turn(
                 "turn_start_time": turn_start_time,
                 "player_id": player_id,  # (#R9) For ownership validation
                 "triggered_passive_elements": triggered_passive_elements,
+                "character_id": character_id,
+                "session_id": session_id,
+                "world_id": world_id,
             }
             logger.info(
                 "Check proposals sent, awaiting player confirmation",
@@ -685,6 +722,9 @@ async def _handle_rp_turn(
             turn_start_time=turn_start_time,
             analytics=analytics,
             triggered_passive_elements=triggered_passive_elements,
+            character_id=character_id,
+            session_id=session_id,
+            world_id=world_id,
         )
 
     except anthropic.APIError as e:
@@ -740,6 +780,9 @@ async def _handle_check_confirm(
             validated_checks=state["validated_checks"],
             ability_scores=state["ability_scores"],
             skill_profs=state["skill_profs"],
+            character_id=state.get("character_id"),
+            session_id=state.get("session_id", ""),
+            world_id=state.get("world_id", ""),
             level=state["level"],
             conditions=state["conditions"],
             environmental_effects=state["environmental_effects"],
@@ -783,8 +826,21 @@ async def _resolve_and_finish_rp(
     turn_start_time: float | None = None,
     analytics: dict | None = None,
     triggered_passive_elements: dict[str, list[str]] | None = None,
+    chain_depth: int = 0,
+    character_id: str | None = None,
+    session_id: str = "",
+    world_id: str = "",
 ) -> None:
     """Resolve checks, send results/animations/scene, then stream final prose."""
+    if chain_depth >= _MAX_AI_CHAIN_DEPTH:
+        logger.warning("AI chain depth exceeded", extra={"depth": chain_depth, "turn_id": ws_turn_id})
+        await ws.send_json(
+            {"type": "chain_limit", "turn_id": ws_turn_id, "message": "Scene paused — AI chain depth exceeded"}
+        )
+        if turn_id:
+            await fail_turn(turn_id, f"chain_depth_exceeded ({chain_depth})")
+        return
+
     check_results = []
 
     for vc in validated_checks:
@@ -878,6 +934,90 @@ async def _resolve_and_finish_rp(
                 "changes": scene_changes,
             }
         )
+
+    # === Persist narrative signals (§6 Three-Layer Narrative) ===
+    raw_signals = analysis.get("narrative_signals", [])
+    if raw_signals and character_id:
+        validated_signals = validate_narrative_signals(raw_signals)
+        if validated_signals:
+            async with _db.AsyncSessionLocal() as signal_db:
+                for sig in validated_signals:
+                    await upsert_thread(
+                        signal_db,
+                        character_id=character_id,
+                        world_id=world_id,
+                        signal=sig,
+                        session_id=session_id if session_id else None,
+                    )
+                await signal_db.commit()
+            logger.info(
+                "Narrative signals persisted",
+                extra={
+                    "turn_id": ws_turn_id,
+                    "signals_count": len(validated_signals),
+                },
+            )
+
+    # === Apply world mutations (consequence system §7, §8) ===
+    raw_mutations = analysis.get("world_mutations", [])
+    mutation_report: dict = {}
+    if raw_mutations and character_id:
+        validated_mutations = validate_world_mutations(raw_mutations)
+        # §8: Filter mutations based on NPC's consequence profile
+        npc_profile = resolve_profile(getattr(npc, "consequence_profile", None))
+        validated_mutations = filter_mutations_by_profile(validated_mutations, npc_profile)
+        if validated_mutations:
+            async with _db.AsyncSessionLocal() as mutation_db:
+                # Load character's faction_standing and relationships from DB
+                char_result = await mutation_db.execute(select(Character).where(Character.id == character_id))
+                char = char_result.scalar_one_or_none()
+
+                faction_standing: dict[str, int] | None = None
+                relationships: dict[str, int] | None = None
+                faction_registry: dict[str, dict] | None = None
+
+                if char is not None:
+                    # Copy dicts — apply_standing_change and
+                    # apply_relationship_change mutate in place
+                    faction_standing = dict(char.faction_standing or {})
+                    relationships = dict(char.relationships or {})
+
+                    # Load faction definitions for propagation
+                    if world_id:
+                        faction_registry = await load_faction_registry(world_id)
+
+                mutation_report = await apply_world_mutations(
+                    mutation_db,
+                    character_id=character_id,
+                    mutations=validated_mutations,
+                    faction_standing=faction_standing,
+                    relationships=relationships,
+                    faction_registry=faction_registry,
+                    session_id=session_id if session_id else None,
+                )
+
+                # Persist updated dicts back to character (Keystone: relay is
+                # source of truth for all persistent state)
+                if char is not None:
+                    if mutation_report.get("faction_changes") and faction_standing is not None:
+                        char.faction_standing = faction_standing
+                        flag_modified(char, "faction_standing")
+                    if mutation_report.get("relationship_changes") and relationships is not None:
+                        char.relationships = relationships
+                        flag_modified(char, "relationships")
+
+                await mutation_db.commit()
+
+            if mutation_report:
+                logger.info(
+                    "World mutations applied",
+                    extra={
+                        "turn_id": ws_turn_id,
+                        "flags_set": len(mutation_report.get("flags_set", [])),
+                        "faction_changes": len(mutation_report.get("faction_changes", [])),
+                        "relationship_changes": len(mutation_report.get("relationship_changes", [])),
+                    },
+                )
 
     if turn_id:
         await update_stage(
@@ -1022,6 +1162,86 @@ _ANALYSIS_TOOL: dict = {
                 },
             },
             "draft_response": {"type": "string"},
+            "narrative_signals": {
+                "type": "array",
+                "description": (
+                    "Lightweight signals about player commitments, interests, "
+                    "revelations, or rising tension noticed during this turn.  "
+                    "Relay persists these as narrative threads for the director."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": ["commitment", "interest", "revelation", "tension"],
+                        },
+                        "summary": {
+                            "type": "string",
+                            "description": "One-sentence description of the signal.",
+                        },
+                        "thread_key": {
+                            "type": "string",
+                            "description": (
+                                "Short snake_case key identifying the narrative "
+                                "thread, e.g. 'missing_brother', 'guild_corruption'."
+                            ),
+                        },
+                        "related_npcs": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "NPC IDs involved in this thread.",
+                        },
+                        "related_regions": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Region IDs relevant to this thread.",
+                        },
+                    },
+                    "required": ["type", "summary", "thread_key"],
+                },
+            },
+            "world_mutations": {
+                "type": "array",
+                "description": (
+                    "Proposed faction, relationship, or world-flag changes "
+                    "caused by this turn's narrative events. Relay validates "
+                    "magnitudes and applies through existing systems."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": [
+                                "faction_standing_change",
+                                "relationship_change",
+                                "world_flag_set",
+                            ],
+                        },
+                        "faction_id": {
+                            "type": "string",
+                            "description": "Required for faction_standing_change.",
+                        },
+                        "npc_id": {
+                            "type": "string",
+                            "description": "Required for relationship_change.",
+                        },
+                        "flag": {
+                            "type": "string",
+                            "description": "Required for world_flag_set.",
+                        },
+                        "delta": {
+                            "type": "integer",
+                            "minimum": -50,
+                            "maximum": 50,
+                            "description": "Signed change for faction or relationship.",
+                        },
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["type", "reason"],
+                },
+            },
         },
         "required": ["checks", "scene_changes", "animation_directives", "draft_response"],
     },

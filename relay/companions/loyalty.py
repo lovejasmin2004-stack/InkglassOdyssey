@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 
 from relay.combat.conditions import EXHAUSTION_MAX
+from relay.companions.relationship import apply_relationship_change
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +44,7 @@ def handle_incapacitation(
     companion["exhaustion_level"] = new_exhaustion
 
     modifier = companion_data.get("dismissal_relationship_modifier", DEFAULT_DISMISSAL_RELATIONSHIP_MODIFIER)
-    old_relationship = relationships.get(npc_id, 0)
-    new_relationship = old_relationship + modifier
-    relationships[npc_id] = new_relationship
+    rel_change = apply_relationship_change(relationships, npc_id, modifier)
 
     old_strain = companion.get("loyalty_strain", 0)
     new_strain = old_strain + 1
@@ -67,8 +66,8 @@ def handle_incapacitation(
     return {
         "npc_id": npc_id,
         "exhaustion_level": new_exhaustion,
-        "relationship_old": old_relationship,
-        "relationship_new": new_relationship,
+        "relationship_old": rel_change["old"],
+        "relationship_new": rel_change["new"],
         "loyalty_strain": new_strain,
         "confrontation_triggered": check_confrontation_threshold(companion, companion_data),
     }
@@ -114,9 +113,7 @@ def apply_dismissal(
     """
     npc_id = companion["npc_id"]
     modifier = companion_data.get("dismissal_relationship_modifier", DEFAULT_DISMISSAL_RELATIONSHIP_MODIFIER)
-    old_relationship = relationships.get(npc_id, 0)
-    new_relationship = old_relationship + modifier
-    relationships[npc_id] = new_relationship
+    rel_change = apply_relationship_change(relationships, npc_id, modifier)
 
     logger.info(
         "Companion dismissed",
@@ -125,7 +122,7 @@ def apply_dismissal(
 
     return {
         "npc_id": npc_id,
-        "relationship_old": old_relationship,
-        "relationship_new": new_relationship,
+        "relationship_old": rel_change["old"],
+        "relationship_new": rel_change["new"],
         "farewell_template": companion_data.get("farewell_template"),
     }

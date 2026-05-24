@@ -19,7 +19,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.attributes import flag_modified
 
 from relay.auth.middleware import require_session_token
 from relay.auth.tokens import SessionTokenPayload
@@ -43,6 +42,7 @@ from relay.database import get_db
 from relay.economy.shop import get_world_currency
 from relay.economy.wallet import log_item_transaction
 from relay.endpoints._helpers import load_character_owned
+from relay.handlers.inventory import InventoryHandler
 from relay.models import TransactionLog
 
 logger = logging.getLogger(__name__)
@@ -162,6 +162,7 @@ async def post_craft(
     Critical success (nat 20): bonus output quantity.
     """
     char = await load_character_owned(db, body.character_id, token.player_id)
+    inv = InventoryHandler(char)
 
     recipe_obj = await load_recipe(body.recipe_id, char.world_id)
     if recipe_obj is None:
@@ -177,7 +178,7 @@ async def post_craft(
             recipe,
             char.level,
             char.known_recipes or [],
-            char.inventory or [],
+            inv.all,
             station_type=body.station_type,
         )
     except RecipeNotKnownError as e:
@@ -225,10 +226,9 @@ async def post_craft(
     is_critical = check_result["roll"] == 20
 
     if not check_result["passed"]:
-        inventory = list(char.inventory or [])
-        inventory, lost = consume_partial_materials(recipe["input_materials"], inventory)
-        char.inventory = inventory
-        flag_modified(char, "inventory")
+        items, lost = consume_partial_materials(recipe["input_materials"], inv.all)
+        inv.replace(items)
+        inv.persist()
 
         lost_note = ", ".join(f"{m['quantity']}x {m['item_id']}" for m in lost)
         await log_item_transaction(
@@ -269,17 +269,16 @@ async def post_craft(
     if output_item and output_item.binding == "bind_on_acquire":
         output_binding = "bound"
 
-    inventory = list(char.inventory or [])
     consumed_materials = recipe["input_materials"]
-    inventory = consume_materials(consumed_materials, inventory)
-    inventory = produce_output(
+    items = consume_materials(consumed_materials, inv.all)
+    items = produce_output(
         recipe["output_item_id"],
         output_quantity,
-        inventory,
+        items,
         binding=output_binding,
     )
-    char.inventory = inventory
-    flag_modified(char, "inventory")
+    inv.replace(items)
+    inv.persist()
 
     await log_item_transaction(
         db,
@@ -489,14 +488,14 @@ async def post_gather(
 
     if result_success:
         # Fix #2: cooldown recorded only on success (transaction log serves as record)
-        inventory = list(char.inventory or [])
-        inventory = add_gathered_to_inventory(
+        inv = InventoryHandler(char)
+        items = add_gathered_to_inventory(
             result_item_id,
             result_quantity,
-            inventory,
+            inv.all,
         )
-        char.inventory = inventory
-        flag_modified(char, "inventory")
+        inv.replace(items)
+        inv.persist()
 
         await log_item_transaction(
             db,

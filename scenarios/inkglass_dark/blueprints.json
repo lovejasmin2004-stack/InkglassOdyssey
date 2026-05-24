@@ -1,0 +1,137 @@
+[
+    {
+        "id": "guild_trials",
+        "world_id": "inkglass_dark",
+        "name": "The Guild Trials",
+        "description": "A gauntlet of trials administered by the regional guild to prove an aspirant's worth. Each trial tests a different skill — combat prowess, arcane knowledge, social cunning, wilderness survival. No two trial runs are identical.",
+        "region_id": "guild_quarter",
+        "level_range": [3, 8],
+        "phase_count_range": [3, 5],
+        "phase_pool": [
+            {
+                "phase_id": "arena_combat",
+                "name": "Arena Combat",
+                "category": "combat",
+                "description": "Face a guild champion in single combat within the training arena.",
+                "checks": [
+                    {"type": "attack_roll", "dc": 14},
+                    {"type": "constitution", "dc": 12}
+                ],
+                "terrain_pool": ["stone_arena", "sand_pit", "elevated_platforms"],
+                "hazard_pool": ["fire_traps", "shifting_floor"],
+                "examiner_pool": ["guildmaster_varro", "champion_kael"],
+                "fail_condition": "Reduced to 0 HP or yield.",
+                "narrative_beats": ["pre_fight_taunt", "crowd_reaction", "post_fight_respect"]
+            },
+            {
+                "phase_id": "beast_hunt",
+                "name": "Beast Hunt",
+                "category": "combat",
+                "description": "Track and subdue a dangerous creature in the surrounding wilderness.",
+                "checks": [
+                    {"type": "survival", "dc": 13},
+                    {"type": "attack_roll", "dc": 12}
+                ],
+                "terrain_pool": ["deep_forest", "mountain_pass", "swamp_edge"],
+                "hazard_pool": ["quicksand", "poisonous_flora", "fog"],
+                "examiner_pool": ["ranger_wynn", "hunter_brenna"],
+                "fail_condition": "Beast escapes or aspirant retreats.",
+                "narrative_beats": ["tracking_phase", "ambush_moment", "trophy_claim"]
+            },
+            {
+                "phase_id": "arcane_puzzle",
+                "name": "Arcane Puzzle Chamber",
+                "category": "puzzle",
+                "description": "Navigate a series of magical wards and puzzles in the guild vault.",
+                "checks": [
+                    {"type": "intelligence", "dc": 14},
+                    {"type": "arcana", "dc": 13}
+                ],
+                "terrain_pool": ["crystal_vault", "mirror_hall", "rune_chamber"],
+                "examiner_pool": ["arcanist_maren", "sage_pellian"],
+                "fail_condition": "Triggered too many wards or ran out of time.",
+                "narrative_beats": ["first_ward_encounter", "pattern_recognition", "final_lock"]
+            },
+            {
+                "phase_id": "negotiation_trial",
+                "name": "The Negotiation",
+                "category": "social",
+                "description": "Broker a deal between two feuding guild factions without violence.",
+                "checks": [
+                    {"type": "persuasion", "dc": 14},
+                    {"type": "insight", "dc": 12}
+                ],
+                "examiner_pool": ["arbiter_callan", "guildmaster_varro"],
+                "fail_condition": "Negotiations collapse or violence breaks out.",
+                "narrative_beats": ["faction_introductions", "hidden_agenda_reveal", "compromise_moment"]
+            },
+            {
+                "phase_id": "endurance_march",
+                "name": "The Long March",
+                "category": "endurance",
+                "description": "A grueling overland march through hostile territory carrying guild supplies.",
+                "checks": [
+                    {"type": "constitution", "dc": 13},
+                    {"type": "athletics", "dc": 12}
+                ],
+                "terrain_pool": ["mountain_trail", "desert_crossing", "frozen_pass"],
+                "hazard_pool": ["rockslide", "blizzard", "heatstroke"],
+                "examiner_pool": ["quartermaster_holt", "ranger_wynn"],
+                "fail_condition": "Collapses from exhaustion or abandons the supplies.",
+                "narrative_beats": ["dawn_departure", "midpoint_crisis", "camp_camaraderie"]
+            },
+            {
+                "phase_id": "infiltration",
+                "name": "Shadow Run",
+                "category": "stealth",
+                "description": "Infiltrate a mock enemy compound and retrieve a guild token undetected.",
+                "checks": [
+                    {"type": "stealth", "dc": 14},
+                    {"type": "dexterity", "dc": 12}
+                ],
+                "terrain_pool": ["warehouse_district", "sewer_tunnels", "rooftop_course"],
+                "hazard_pool": ["guard_patrols", "alarm_wards", "pit_traps"],
+                "examiner_pool": ["spymaster_lira", "champion_kael"],
+                "fail_condition": "Detected three times or failed to retrieve the token.",
+                "narrative_beats": ["briefing", "close_call", "extraction"]
+            },
+            {
+                "phase_id": "wilderness_survival",
+                "name": "Survival Trial",
+                "category": "exploration",
+                "description": "Survive three days in the untamed wilds with minimal supplies.",
+                "checks": [
+                    {"type": "survival", "dc": 13},
+                    {"type": "wisdom", "dc": 11}
+                ],
+                "terrain_pool": ["old_growth_forest", "coastal_cliffs", "moorland"],
+                "hazard_pool": ["predator_encounter", "flash_flood", "venomous_insects"],
+                "examiner_pool": ["ranger_wynn", "hunter_brenna"],
+                "fail_condition": "Required rescue or failed to return within the time limit.",
+                "narrative_beats": ["shelter_construction", "night_encounter", "dawn_return"]
+            }
+        ],
+        "selection_rules": {
+            "must_include_categories": ["combat"],
+            "final_phase_categories": ["combat", "social"],
+            "max_consecutive_same_category": 2,
+            "excluded_combinations": [["arena_combat", "beast_hunt"]]
+        },
+        "npc_roster": {
+            "anchor_npcs": ["guildmaster_varro", "champion_kael"],
+            "generated_count_range": [3, 6],
+            "generated_template_roles": ["guard", "traveler"]
+        },
+        "prerequisites": {
+            "faction_requirements": [],
+            "quest_requirements": [],
+            "min_relationship_with_npc": null
+        },
+        "completion_rewards": {
+            "companion_unlocked": null,
+            "faction_change": {"faction_id": "adventurers_guild", "amount": 15},
+            "items": ["guild_badge"]
+        },
+        "failure_handling": "conditional_pass"
+    }
+]

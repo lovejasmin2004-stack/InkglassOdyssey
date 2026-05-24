@@ -1,0 +1,162 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "npc_template",
+    "title": "NpcTemplate",
+    "description": "Role-based template for generating Tier 2 NPCs. Provides mechanical constraints and narrative pools; the generator fills in specifics.",
+    "type": "object",
+    "required": [
+        "id",
+        "world_id",
+        "role_display",
+        "entity_class",
+        "level_range",
+        "hit_die",
+        "ability_score_profile",
+        "ac_range",
+        "saving_throw_proficiencies",
+        "skill_proficiency_pool",
+        "skill_proficiency_count",
+        "animation_profile_defaults",
+        "few_shot_templates",
+        "manipulation_resistance_templates",
+        "name_pool",
+        "personality_trait_pool"
+    ],
+    "additionalProperties": false,
+    "properties": {
+        "id": {"type": "string", "description": "Template ID, e.g. 'merchant', 'guard', 'traveler'."},
+        "world_id": {"type": "string"},
+        "role_display": {
+            "type": "string",
+            "description": "Human-readable role name used in the generated NPC's role field."
+        },
+        "entity_class": {"type": "string", "enum": ["humanoid", "creature", "spirit", "construct"]},
+        "level_range": {
+            "type": "array",
+            "items": {"type": "integer", "minimum": 1, "maximum": 20},
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "[min_level, max_level] — generator picks within this range."
+        },
+        "hit_die": {"type": "integer", "enum": [6, 8, 10, 12]},
+        "ability_score_profile": {
+            "type": "object",
+            "required": ["primary", "secondary"],
+            "additionalProperties": false,
+            "properties": {
+                "primary": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "maxItems": 2,
+                    "description": "Ability scores that get the highest values (14-16)."
+                },
+                "secondary": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Ability scores that get moderate values (11-13)."
+                },
+                "dump": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Ability scores that get low values (8-10)."
+                }
+            }
+        },
+        "ac_range": {
+            "type": "array",
+            "items": {"type": "integer", "minimum": 5, "maximum": 25},
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "[min_ac, max_ac]."
+        },
+        "saving_throw_proficiencies": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2},
+        "skill_proficiency_pool": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 2,
+            "description": "Pool of skills the generator picks from."
+        },
+        "skill_proficiency_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 6,
+            "description": "How many skills to pick from the pool."
+        },
+        "animation_profile_defaults": {
+            "type": "object",
+            "required": ["default_stance", "default_gaze", "emotional_state_to_animation"],
+            "additionalProperties": false,
+            "properties": {
+                "default_stance": {"type": "string"},
+                "default_gaze": {"type": "string"},
+                "emotional_state_to_animation": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string"},
+                    "minProperties": 3
+                }
+            }
+        },
+        "few_shot_templates": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["player_input", "npc_response_template", "context_tag"],
+                "additionalProperties": false,
+                "properties": {
+                    "player_input": {"type": "string"},
+                    "npc_response_template": {
+                        "type": "string",
+                        "description": "Response template with {name} placeholder."
+                    },
+                    "context_tag": {"type": "string", "enum": ["casual", "tense", "hostile", "transactional"]}
+                }
+            },
+            "minItems": 2
+        },
+        "manipulation_resistance_templates": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["player_input", "npc_refusal_template"],
+                "additionalProperties": false,
+                "properties": {
+                    "player_input": {"type": "string"},
+                    "npc_refusal_template": {
+                        "type": "string",
+                        "description": "Refusal template with {name} placeholder."
+                    }
+                }
+            },
+            "minItems": 1
+        },
+        "name_pool": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 5,
+            "description": "Names the generator picks from (world-appropriate)."
+        },
+        "personality_trait_pool": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 3,
+            "description": "Personality traits for background generation."
+        },
+        "faction_affinity": {"type": "string", "description": "Default faction_id for NPCs of this role. Optional."},
+        "consequence_profile": {
+            "type": "string",
+            "enum": ["protected", "combatant", "hostile", "ephemeral"],
+            "default": "protected"
+        },
+        "knowledge_scope": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Topics this role typically knows about (used for knowledge_boundaries.knows generation)."
+        },
+        "ignorance_scope": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Topics this role typically does NOT know (used for knowledge_boundaries.does_not_know)."
+        }
+    }
+}
