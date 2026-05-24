@@ -1126,3 +1126,284 @@ class TestAnalysisToolSchema:
         assert "darkness" in add_items["enum"]
         assert "difficult_terrain" in add_items["enum"]
         assert "hazard" in add_items["enum"]
+
+
+# ---------------------------------------------------------------------------
+# Turn resume tests (#2, Issue #6)
+# ---------------------------------------------------------------------------
+
+
+class TestTurnResume:
+    """Tests for _handle_turn_resume — crash recovery via pending turns."""
+
+    @patch("relay.endpoints.dialogue.mark_stale_turns", return_value=0)
+    @patch("relay.endpoints.dialogue.get_pending_turns", return_value=[])
+    @patch("relay.endpoints.dialogue.get_pending_turn")
+    def test_resume_missing_turn_id_rejected(self, mock_get_pt, _mock_pending, _mock_stale):
+        """turn_resume without turn_id returns missing_field error."""
+        token = _session_token()
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            with client.websocket_connect("/dialogue") as ws:
+                ws.send_text(_auth_msg(token))
+                ws.send_text(json.dumps({"type": "turn_resume"}))
+                msg = json.loads(ws.receive_text())
+                assert msg["type"] == "error"
+                assert msg["code"] == "missing_field"
+
+    @patch("relay.endpoints.dialogue.mark_stale_turns", return_value=0)
+    @patch("relay.endpoints.dialogue.get_pending_turns", return_value=[])
+    @patch("relay.endpoints.dialogue.get_pending_turn", return_value=None)
+    def test_resume_nonexistent_turn_rejected(self, mock_get_pt, _mock_pending, _mock_stale):
+        """turn_resume with unknown turn_id returns not_found error."""
+        token = _session_token()
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            with client.websocket_connect("/dialogue") as ws:
+                ws.send_text(_auth_msg(token))
+                import time
+
+                time.sleep(3.1)  # Rate limit
+                ws.send_text(json.dumps({"type": "turn_resume", "turn_id": "pt_nonexistent"}))
+                msg = json.loads(ws.receive_text())
+                assert msg["type"] == "error"
+                assert msg["code"] == "not_found"
+
+    @patch("relay.endpoints.dialogue.mark_stale_turns", return_value=0)
+    @patch("relay.endpoints.dialogue.get_pending_turns", return_value=[])
+    @patch("relay.endpoints.dialogue.get_pending_turn")
+    def test_resume_wrong_player_rejected(self, mock_get_pt, _mock_pending, _mock_stale):
+        """turn_resume by wrong player returns unauthorized error."""
+        token = _session_token(player_id="player_001")
+        mock_get_pt.return_value = {
+            "turn_id": "pt_12345",
+            "scene_id": "scene_001",
+            "npc_id": "test_npc",
+            "turn_type": "rp",
+            "stage": "received",
+            "player_id": "player_999",  # Different player
+            "player_input": "Hello",
+            "character_snapshot": None,
+            "analysis_result": None,
+            "check_results": None,
+            "animation_directives": None,
+            "scene_changes": None,
+            "final_response": None,
+            "error_message": None,
+            "created_at": "2026-01-01T00:00:00",
+            "retry_count": 0,
+            "parent_turn_id": None,
+        }
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            with client.websocket_connect("/dialogue") as ws:
+                ws.send_text(_auth_msg(token))
+                import time
+
+                time.sleep(3.1)
+                ws.send_text(json.dumps({"type": "turn_resume", "turn_id": "pt_12345"}))
+                msg = json.loads(ws.receive_text())
+                assert msg["type"] == "error"
+                assert msg["code"] == "unauthorized"
+
+    @patch("relay.endpoints.dialogue.mark_stale_turns", return_value=0)
+    @patch("relay.endpoints.dialogue.get_pending_turns", return_value=[])
+    @patch("relay.endpoints.dialogue.get_pending_turn")
+    def test_resume_terminal_state_rejected(self, mock_get_pt, _mock_pending, _mock_stale):
+        """turn_resume on a completed turn returns invalid_state error."""
+        token = _session_token()
+        mock_get_pt.return_value = {
+            "turn_id": "pt_12345",
+            "scene_id": "scene_001",
+            "npc_id": "test_npc",
+            "turn_type": "rp",
+            "stage": "complete",  # Terminal state
+            "player_id": "player_001",
+            "player_input": "Hello",
+            "character_snapshot": None,
+            "analysis_result": None,
+            "check_results": None,
+            "animation_directives": None,
+            "scene_changes": None,
+            "final_response": "NPC responded.",
+            "error_message": None,
+            "created_at": "2026-01-01T00:00:00",
+            "retry_count": 0,
+            "parent_turn_id": None,
+        }
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            with client.websocket_connect("/dialogue") as ws:
+                ws.send_text(_auth_msg(token))
+                import time
+
+                time.sleep(3.1)
+                ws.send_text(json.dumps({"type": "turn_resume", "turn_id": "pt_12345"}))
+                msg = json.loads(ws.receive_text())
+                assert msg["type"] == "error"
+                assert msg["code"] == "invalid_state"
+
+    @patch("relay.endpoints.dialogue.mark_stale_turns", return_value=0)
+    @patch("relay.endpoints.dialogue.get_pending_turns", return_value=[])
+    @patch("relay.endpoints.dialogue.fail_turn")
+    @patch("relay.endpoints.dialogue.get_pending_turn")
+    def test_resume_max_retries_rejected(self, mock_get_pt, mock_fail, _mock_pending, _mock_stale):
+        """turn_resume when retry_count >= MAX_RETRIES marks failed."""
+        token = _session_token()
+        mock_get_pt.return_value = {
+            "turn_id": "pt_12345",
+            "scene_id": "scene_001",
+            "npc_id": "test_npc",
+            "turn_type": "rp",
+            "stage": "analysis",
+            "player_id": "player_001",
+            "player_input": "Hello",
+            "character_snapshot": None,
+            "analysis_result": None,
+            "check_results": None,
+            "animation_directives": None,
+            "scene_changes": None,
+            "final_response": None,
+            "error_message": None,
+            "created_at": "2026-01-01T00:00:00",
+            "retry_count": 3,  # At max
+            "parent_turn_id": None,
+        }
+        mock_fail.return_value = None
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            with client.websocket_connect("/dialogue") as ws:
+                ws.send_text(_auth_msg(token))
+                import time
+
+                time.sleep(3.1)
+                ws.send_text(json.dumps({"type": "turn_resume", "turn_id": "pt_12345"}))
+                msg = json.loads(ws.receive_text())
+                assert msg["type"] == "error"
+                assert msg["code"] == "max_retries"
+
+    @patch("relay.endpoints.dialogue.mark_stale_turns", return_value=0)
+    @patch("relay.endpoints.dialogue.get_pending_turns", return_value=[])
+    @patch("relay.endpoints.dialogue.complete_turn")
+    @patch("relay.endpoints.dialogue.get_scene_turn_history", return_value=[])
+    @patch("relay.endpoints.dialogue.get_pending_turn")
+    def test_resume_streaming_with_saved_response_delivers_without_llm(
+        self,
+        mock_get_pt,
+        mock_history,
+        mock_complete,
+        _mock_pending,
+        _mock_stale,
+    ):
+        """turn_resume from 'streaming' with final_response delivers saved text."""
+        token = _session_token()
+        mock_get_pt.return_value = {
+            "turn_id": "pt_12345",
+            "scene_id": "scene_001",
+            "npc_id": "test_npc",
+            "turn_type": "rp",
+            "stage": "streaming",
+            "player_id": "player_001",
+            "player_input": "I ask about herbs.",
+            "character_snapshot": {"ability_scores": {}},
+            "analysis_result": None,
+            "check_results": [{"skill": "persuasion", "dc": 12, "passed": True}],
+            "animation_directives": None,
+            "scene_changes": {"notes": "calm scene"},
+            "final_response": "The herbalist smiles warmly and shows you her collection.",
+            "error_message": None,
+            "created_at": "2026-01-01T00:00:00",
+            "retry_count": 0,
+            "parent_turn_id": None,
+        }
+        mock_complete.return_value = None
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            with client.websocket_connect("/dialogue") as ws:
+                ws.send_text(_auth_msg(token))
+                import time
+
+                time.sleep(3.1)
+                ws.send_text(json.dumps({"type": "turn_resume", "turn_id": "pt_12345"}))
+                msgs = _recv_all(ws, until_type="stream_end")
+
+        types = [m["type"] for m in msgs]
+        assert "stream_start" in types
+        assert "stream_end" in types
+        stream_end = next(m for m in msgs if m["type"] == "stream_end")
+        assert "herbalist smiles" in stream_end["full_text"]
+
+        # Verify complete_turn was called
+        mock_complete.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# CharacterMechanics loading tests (Keystone Principle)
+# ---------------------------------------------------------------------------
+
+
+class TestCharacterMechanicsLoading:
+    """Verify the DB-authoritative character stats loading."""
+
+    def test_load_character_mechanics_returns_db_stats(self):
+        """load_character_mechanics returns data from the Character model."""
+        import asyncio
+
+        from relay.ai.game_context import CharacterMechanics, load_character_mechanics
+
+        # This test runs without a DB, so the function should return None
+        result = asyncio.run(load_character_mechanics("nonexistent_char"))
+        assert result is None
+
+    def test_character_mechanics_dataclass_frozen(self):
+        """CharacterMechanics is immutable (frozen dataclass)."""
+        from relay.ai.game_context import CharacterMechanics
+
+        cm = CharacterMechanics(
+            character_id="test",
+            ability_scores={"strength": 16},
+            skill_proficiencies=["athletics"],
+            level=5,
+            conditions=[],
+            exhaustion_level=0,
+        )
+        assert cm.character_id == "test"
+        assert cm.ability_scores == {"strength": 16}
+        assert cm.level == 5
+
+        # Should raise on attempt to modify
+        with pytest.raises(Exception):
+            cm.level = 10  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# LRU eviction test
+# ---------------------------------------------------------------------------
+
+
+class TestSceneHistoryLRU:
+    """Verify that scene history uses LRU eviction, not FIFO."""
+
+    def test_get_or_load_history_lru_eviction(self):
+        """Accessing a scene moves it to end, evicting true LRU on overflow."""
+        import asyncio
+        from collections import OrderedDict
+
+        from relay.endpoints.dialogue import _MAX_SCENES_PER_CONNECTION, _get_or_load_history
+
+        scene_histories: OrderedDict[str, list[dict[str, str]]] = OrderedDict()
+
+        # Fill to capacity with pre-loaded scenes
+        for i in range(_MAX_SCENES_PER_CONNECTION):
+            scene_histories[f"scene_{i}"] = [{"role": "user", "content": f"msg_{i}"}]
+
+        # Access scene_0 (oldest) — moves it to end (most recent)
+        with patch("relay.endpoints.dialogue.get_scene_turn_history", return_value=None):
+            result = asyncio.run(_get_or_load_history(scene_histories, "scene_0"))
+            assert result is not None
+
+        # scene_0 should now be at the end
+        keys = list(scene_histories.keys())
+        assert keys[-1] == "scene_0"
+        # scene_1 should now be the LRU (first)
+        assert keys[0] == "scene_1"

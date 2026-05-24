@@ -67,6 +67,23 @@ class GameStateContext:
     director_signal: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class CharacterMechanics:
+    """Authoritative mechanical stats loaded from the database.
+
+    The relay DB is the source of truth for all persistent state (Keystone
+    Principle).  These values are used for check resolution — never trust
+    client-supplied stats for mechanical outcomes.
+    """
+
+    character_id: str
+    ability_scores: dict[str, int] = field(default_factory=dict)
+    skill_proficiencies: list[str] = field(default_factory=list)
+    level: int = 1
+    conditions: list[dict] = field(default_factory=list)
+    exhaustion_level: int = 0
+
+
 async def resolve_character_id(session_id: str) -> str | None:
     """Look up the character_id for an active session.
 
@@ -76,6 +93,36 @@ async def resolve_character_id(session_id: str) -> str | None:
         result = await db.execute(select(GameSession.character_id).where(GameSession.id == session_id))
         row = result.scalar_one_or_none()
     return row
+
+
+async def load_character_mechanics(character_id: str) -> CharacterMechanics | None:
+    """Load authoritative mechanical stats from the database.
+
+    These are the values that MUST be used for check resolution, overriding
+    anything the client sends.  Enforces the Keystone Principle: relay is the
+    source of truth for all persistent state.
+
+    Returns None if the character doesn't exist.
+    """
+    async with _db.AsyncSessionLocal() as db:
+        result = await db.execute(select(Character).where(Character.id == character_id))
+        char = result.scalar_one_or_none()
+
+    if char is None:
+        logger.warning(
+            "Character not found for mechanics load",
+            extra={"character_id": character_id},
+        )
+        return None
+
+    return CharacterMechanics(
+        character_id=character_id,
+        ability_scores=dict(char.ability_scores or {}),
+        skill_proficiencies=list(char.skill_proficiencies or []),
+        level=char.level,
+        conditions=list(char.conditions or []),
+        exhaustion_level=char.exhaustion_level,
+    )
 
 
 async def load_game_context(
