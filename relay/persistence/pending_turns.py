@@ -319,13 +319,21 @@ async def mark_stale_turns(
 
     Returns the number of turns marked stale. Called on WebSocket connect
     and session state fetch to clean up orphaned turns from relay crashes.
+
+    Age filtering is done in SQL to avoid loading all incomplete turns into
+    memory when only a few are actually stale.
     """
-    cutoff = datetime.now(UTC)
+    now = datetime.now(UTC)
+    from datetime import timedelta
+
+    cutoff = now - timedelta(seconds=threshold_seconds)
+
     async with _session() as db:
         query = (
             select(PendingTurn)
             .where(PendingTurn.player_id == player_id)
             .where(PendingTurn.stage.notin_(["complete", "failed"]))
+            .where(PendingTurn.created_at < cutoff)
         )
         # (#5) Scope to session if provided
         if session_id:
@@ -334,19 +342,17 @@ async def mark_stale_turns(
         result = await db.execute(query)
         turns = list(result.scalars().all())
 
-        stale_count = 0
         for pt in turns:
-            # (#10 from step 8) Ensure timezone-aware comparison
+            pt.stage = "failed"
+            # Calculate actual age for the error message
             created = pt.created_at
             if created.tzinfo is None:
                 created = created.replace(tzinfo=UTC)
-            age_seconds = (cutoff - created).total_seconds()
-            if age_seconds > threshold_seconds:
-                pt.stage = "failed"
-                pt.error_message = f"stale_timeout ({int(age_seconds)}s)"
-                pt.updated_at = datetime.now(UTC)
-                stale_count += 1
+            age_seconds = int((now - created).total_seconds())
+            pt.error_message = f"stale_timeout ({age_seconds}s)"
+            pt.updated_at = now
 
+        stale_count = len(turns)
         if stale_count > 0:
             await db.commit()
             logger.info(
@@ -475,13 +481,16 @@ async def get_retry_count(scene_id: str, player_input: str) -> int:
     """Get the number of prior failed attempts for a given player input in a scene (#4).
 
     Used to determine the retry_count for a new pending turn when the client
-    retries after a failure.
+    retries after a failure. Uses SQL COUNT(*) to avoid loading all rows.
     """
+    from sqlalchemy import func
+
     async with _session() as db:
         result = await db.execute(
-            select(PendingTurn)
+            select(func.count())
+            .select_from(PendingTurn)
             .where(PendingTurn.scene_id == scene_id)
             .where(PendingTurn.player_input == player_input)
             .where(PendingTurn.stage == "failed")
         )
-        return len(list(result.scalars().all()))
+        return result.scalar() or 0

@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy import select as sa_select
 
+import relay.database as _db
 from relay.auth.tokens import create_account_token
+from relay.models import Character as CharacterModel
+from relay.models import Scene as SceneModel
 from relay.tests.conftest import make_stub_npc
 
 
@@ -425,3 +430,320 @@ class TestSessionStateWithScenes:
         data = state.json()
         assert len(data["scenes"]) == 1
         assert data["scenes"][0]["npc_id"] == "seta_inkglass_dark"
+
+
+# ---------------------------------------------------------------------------
+# Tier 2 world enforcement (#1)
+# ---------------------------------------------------------------------------
+
+
+class TestTier2WorldEnforcement:
+    """Tier 2 worlds (wha_au, atla_au, gachiakuta_au, hxh_au) reject tier 1 players."""
+
+    @pytest.fixture()
+    def tier2_auth_header(self):
+        token = create_account_token(player_id="player_001", tier=2)
+        return {"Authorization": f"Bearer {token}"}
+
+    @pytest.fixture()
+    def tier2_character_id(self, db_client, tier2_auth_header):
+        """Create a character in a tier 2 world."""
+        resp = db_client.post(
+            "/character",
+            json={
+                "world_id": "wha_au",
+                "name": "Tier2Char",
+                "specialisation_path_id": "scout",
+                "ability_scores": {
+                    "strength": 10,
+                    "dexterity": 16,
+                    "constitution": 14,
+                    "intelligence": 12,
+                    "wisdom": 14,
+                    "charisma": 10,
+                },
+                "skill_proficiencies": ["stealth", "perception", "survival"],
+                "saving_throw_proficiencies": ["dexterity", "wisdom"],
+            },
+            headers=tier2_auth_header,
+        )
+        assert resp.status_code == 201
+        return resp.json()["id"]
+
+    def test_tier1_player_rejected_from_tier2_world(self, db_client, auth_header, tier2_character_id):
+        """Tier 1 player cannot start session in a tier 2 world."""
+        resp = db_client.post(
+            "/session/start",
+            json={"character_id": tier2_character_id, "world_id": "wha_au"},
+            headers=auth_header,  # tier=1
+        )
+        assert resp.status_code == 403
+        assert "Tier 2" in resp.json()["message"]
+
+    def test_tier2_player_allowed_in_tier2_world(self, db_client, tier2_auth_header, tier2_character_id):
+        """Tier 2 player can start session in a tier 2 world."""
+        resp = db_client.post(
+            "/session/start",
+            json={"character_id": tier2_character_id, "world_id": "wha_au"},
+            headers=tier2_auth_header,
+        )
+        assert resp.status_code == 201
+        assert resp.json()["world_id"] == "wha_au"
+
+    @pytest.mark.parametrize("world_id", ["wha_au", "atla_au", "gachiakuta_au", "hxh_au"])
+    def test_all_tier2_worlds_reject_tier1(self, db_client, auth_header, world_id):
+        """All four tier 2 worlds enforce tier restriction."""
+        resp = db_client.post(
+            "/session/start",
+            json={"character_id": "dummy_char", "world_id": world_id},
+            headers=auth_header,  # tier=1
+        )
+        # Rejected at tier check before character lookup
+        assert resp.status_code == 403
+        assert resp.json()["code"] == "forbidden"
+
+
+# ---------------------------------------------------------------------------
+# World mismatch (#2)
+# ---------------------------------------------------------------------------
+
+
+class TestWorldMismatch:
+    """Character's world_id must match the session's requested world_id."""
+
+    def test_character_world_mismatch_rejected(self, db_client, auth_header, character_id):
+        """Character in inkglass_dark cannot start session in murim."""
+        resp = db_client.post(
+            "/session/start",
+            json={"character_id": character_id, "world_id": "murim"},
+            headers=auth_header,
+        )
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["code"] == "world_mismatch"
+        assert "inkglass_dark" in data["message"]
+        assert "murim" in data["message"]
+
+
+# ---------------------------------------------------------------------------
+# Scene max limit (#5)
+# ---------------------------------------------------------------------------
+
+
+class TestSceneMaxLimit:
+    """Maximum 20 active scenes per session."""
+
+    def test_scene_limit_reached(self, db_client, auth_header, character_id):
+        """21st scene creation returns 409 scene_limit_reached."""
+        start = db_client.post(
+            "/session/start",
+            json={"character_id": character_id, "world_id": "inkglass_dark"},
+            headers=auth_header,
+        )
+        session_id = start.json()["session_id"]
+
+        # Create 20 active scenes (the maximum)
+        for i in range(20):
+            resp = db_client.post(
+                "/scene",
+                json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+                headers=auth_header,
+            )
+            assert resp.status_code == 201, f"Scene {i + 1} creation failed"
+
+        # 21st should fail
+        resp = db_client.post(
+            "/scene",
+            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            headers=auth_header,
+        )
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "scene_limit_reached"
+
+    def test_ended_scenes_dont_count_toward_limit(self, db_client, auth_header, character_id):
+        """Ended scenes free up space for new ones."""
+        start = db_client.post(
+            "/session/start",
+            json={"character_id": character_id, "world_id": "inkglass_dark"},
+            headers=auth_header,
+        )
+        session_id = start.json()["session_id"]
+
+        # Create and end 20 scenes
+        for _ in range(20):
+            create = db_client.post(
+                "/scene",
+                json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+                headers=auth_header,
+            )
+            scene_id = create.json()["id"]
+            db_client.post(f"/scene/{scene_id}/end", headers=auth_header)
+
+        # Can still create a new scene because all 20 are ended
+        resp = db_client.post(
+            "/scene",
+            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            headers=auth_header,
+        )
+        assert resp.status_code == 201
+
+
+# ---------------------------------------------------------------------------
+# Level-up validation (#9)
+# ---------------------------------------------------------------------------
+
+
+class TestLevelUpValidation:
+    """Level increment requires minimum turn count and respects level cap."""
+
+    def _start_session(self, db_client, auth_header, character_id):
+        resp = db_client.post(
+            "/session/start",
+            json={"character_id": character_id, "world_id": "inkglass_dark"},
+            headers=auth_header,
+        )
+        return resp.json()["session_id"]
+
+    def test_level_up_insufficient_turns_rejected(self, db_client, auth_header, character_id):
+        """Level increment rejected when total turns < 5."""
+        session_id = self._start_session(db_client, auth_header, character_id)
+
+        # Create a scene with only 3 turns (below the 5 minimum)
+        scene_resp = db_client.post(
+            "/scene",
+            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            headers=auth_header,
+        )
+        scene_id = scene_resp.json()["id"]
+
+        async def _set_turn_count():
+            async with _db.AsyncSessionLocal() as db:
+                result = await db.execute(sa_select(SceneModel).where(SceneModel.id == scene_id))
+                scene = result.scalar_one()
+                scene.turn_count = 3
+                await db.commit()
+
+        asyncio.run(_set_turn_count())
+
+        resp = db_client.post(
+            f"/session/{session_id}/end",
+            json={"level_increment": True},
+            headers=auth_header,
+        )
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["code"] == "insufficient_progress"
+        assert "5 turns" in data["message"]
+
+    def test_level_up_insufficient_turns_keeps_session_active(self, db_client, auth_header, character_id):
+        """Failed level_increment validation leaves session active for retry."""
+        session_id = self._start_session(db_client, auth_header, character_id)
+
+        # Only 2 turns — below threshold
+        scene_resp = db_client.post(
+            "/scene",
+            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            headers=auth_header,
+        )
+        scene_id = scene_resp.json()["id"]
+
+        async def _set_turn_count():
+            async with _db.AsyncSessionLocal() as db:
+                result = await db.execute(sa_select(SceneModel).where(SceneModel.id == scene_id))
+                scene = result.scalar_one()
+                scene.turn_count = 2
+                await db.commit()
+
+        asyncio.run(_set_turn_count())
+
+        # Attempt level-up — fails
+        resp = db_client.post(
+            f"/session/{session_id}/end",
+            json={"level_increment": True},
+            headers=auth_header,
+        )
+        assert resp.status_code == 400
+
+        # Session is still active — can retry with level_increment=false
+        state = db_client.get(f"/session/{session_id}/state", headers=auth_header)
+        assert state.json()["status"] == "active"
+
+        # End without level increment succeeds
+        resp2 = db_client.post(
+            f"/session/{session_id}/end",
+            json={"level_increment": False},
+            headers=auth_header,
+        )
+        assert resp2.status_code == 200
+
+    def test_level_up_at_cap_does_not_increment(self, db_client, auth_header, character_id):
+        """Character at level 20 does not exceed cap."""
+        session_id = self._start_session(db_client, auth_header, character_id)
+
+        # Set character to level 20 (the cap)
+        async def _set_level_to_cap():
+            async with _db.AsyncSessionLocal() as db:
+                result = await db.execute(sa_select(CharacterModel).where(CharacterModel.id == character_id))
+                char = result.scalar_one()
+                char.level = 20
+                await db.commit()
+
+        asyncio.run(_set_level_to_cap())
+
+        # Create a scene with enough turns
+        scene_resp = db_client.post(
+            "/scene",
+            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            headers=auth_header,
+        )
+        scene_id = scene_resp.json()["id"]
+
+        async def _set_turn_count():
+            async with _db.AsyncSessionLocal() as db:
+                result = await db.execute(sa_select(SceneModel).where(SceneModel.id == scene_id))
+                scene = result.scalar_one()
+                scene.turn_count = 10
+                await db.commit()
+
+        asyncio.run(_set_turn_count())
+
+        resp = db_client.post(
+            f"/session/{session_id}/end",
+            json={"level_increment": True},
+            headers=auth_header,
+        )
+        assert resp.status_code == 200
+
+        # Character remains at level 20, not 21
+        char_resp = db_client.get(f"/character/{character_id}", headers=auth_header)
+        assert char_resp.json()["level"] == 20
+
+    def test_level_up_exactly_at_threshold(self, db_client, auth_header, character_id):
+        """Level up succeeds when total turns == exactly 5 (the minimum)."""
+        session_id = self._start_session(db_client, auth_header, character_id)
+
+        scene_resp = db_client.post(
+            "/scene",
+            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            headers=auth_header,
+        )
+        scene_id = scene_resp.json()["id"]
+
+        async def _set_turn_count():
+            async with _db.AsyncSessionLocal() as db:
+                result = await db.execute(sa_select(SceneModel).where(SceneModel.id == scene_id))
+                scene = result.scalar_one()
+                scene.turn_count = 5
+                await db.commit()
+
+        asyncio.run(_set_turn_count())
+
+        resp = db_client.post(
+            f"/session/{session_id}/end",
+            json={"level_increment": True},
+            headers=auth_header,
+        )
+        assert resp.status_code == 200
+
+        char_resp = db_client.get(f"/character/{character_id}", headers=auth_header)
+        assert char_resp.json()["level"] == 2
