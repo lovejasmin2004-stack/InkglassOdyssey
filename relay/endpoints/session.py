@@ -274,7 +274,10 @@ async def start_session(body: SessionStartRequest, token: Token, db: DB) -> Sess
             },
         )
 
-    # Check for existing active session for this player
+    # Check for existing active session for this player.
+    # Design decision: ONE active session per player across ALL worlds.
+    # This prevents split-attention exploits and simplifies recovery.
+    # If per-world independent sessions are needed later, add world_id filter here.
     active = await db.execute(
         select(GameSession).where(GameSession.player_id == token.player_id).where(GameSession.status == "active")
     )
@@ -422,16 +425,9 @@ async def end_session(session_id: str, body: SessionEndRequest, token: Token, db
             pt.error_message = "session_ended"
             pt.updated_at = now
 
-    # Build summary and analytics
-    summary = _build_session_summary(session, scenes)
-    analytics = _build_session_analytics(session, scenes)
-
-    session.status = "ended"
-    session.ended_at = now
-    session.session_summary = summary
-    session.analytics = analytics
-
-    # (#9) Level increment with guard rails
+    # (#9) Level increment validation BEFORE mutating session status.
+    # If this fails with 400, the session remains active and the client can
+    # retry with level_increment=false.
     if body.level_increment:
         total_turns = sum(s.turn_count for s in scenes)
         if total_turns < _MIN_TURNS_FOR_LEVEL_UP:
@@ -444,6 +440,17 @@ async def end_session(session_id: str, body: SessionEndRequest, token: Token, db
                 },
             )
 
+    # Build summary and analytics
+    summary = _build_session_summary(session, scenes)
+    analytics = _build_session_analytics(session, scenes)
+
+    session.status = "ended"
+    session.ended_at = now
+    session.session_summary = summary
+    session.analytics = analytics
+
+    # Apply level increment (already validated above)
+    if body.level_increment:
         char_result = await db.execute(select(Character).where(Character.id == session.character_id))
         character = char_result.scalar_one_or_none()
         if character and character.level < 20:
