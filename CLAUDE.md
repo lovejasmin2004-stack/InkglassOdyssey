@@ -23,6 +23,8 @@ Read the relevant design document **before** working on the listed directories o
 | docs/schemas reference.pdf | /schemas/, relay/schemas.py | Complete field definitions for all JSON schemas |
 | docs/narrative control.pdf | Narrative endpoints, Workshop UI | Canonical spec for narrative control panels and plot beat schema |
 | docs/prompt_engineering.md (planned) | relay/ai/rp_prompts.py, chat_prompts.py | Prompt structure, few-shot format, check result integration |
+| docs/architecture_research.md | Any new subsystem adoption | Comparative analysis of ai-gamemaster, Evennia, ai_rpg — adoptable patterns and skip list |
+| docs/design_proposals.md | relay/narrative/, templates/, scenarios/, relay/ai/ | Content tiers, blueprints, narrative layers, consequence system, prompt builder gaps, menu concept |
 
 ## 1. What This Project Is
 
