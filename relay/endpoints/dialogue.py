@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections import OrderedDict
 
 import anthropic
 import jwt
@@ -39,7 +40,13 @@ from sqlalchemy.orm.attributes import flag_modified
 
 import relay.database as _db
 from relay.ai.chat_prompts import build_quickchat_system_prompt
-from relay.ai.game_context import GameStateContext, load_game_context, resolve_character_id
+from relay.ai.game_context import (
+    CharacterMechanics,
+    GameStateContext,
+    load_character_mechanics,
+    load_game_context,
+    resolve_character_id,
+)
 from relay.ai.npc_loader import NpcLoadError, load_npc
 from relay.ai.rp_prompts import (
     build_analysis_messages,
@@ -90,9 +97,17 @@ _MEMORY_SUMMARY_THRESHOLD = 30
 # Lower than ai-gamemaster's 20 — streaming costs more per step.
 _MAX_AI_CHAIN_DEPTH = 10
 
+# Timeout for LLM API calls in seconds. Prevents indefinite hangs if Anthropic
+# API is unresponsive. The pending turn becomes stale after 5 min regardless,
+# but this releases the WebSocket sooner for a better player experience.
+_LLM_TIMEOUT_SECONDS = 45.0
+
 
 def _get_client() -> anthropic.AsyncAnthropic:
-    return anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    return anthropic.AsyncAnthropic(
+        api_key=settings.anthropic_api_key,
+        timeout=_LLM_TIMEOUT_SECONDS,
+    )
 
 
 def _trim_history(history: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -142,6 +157,67 @@ def _build_npc_memory_summary(history: list[dict[str, str]]) -> str | None:
 
 async def _send_error(ws: WebSocket, code: str, message: str) -> None:
     await ws.send_json({"type": "error", "code": code, "message": message})
+
+
+async def _flush_connection_analytics(session_id: str, analytics: dict) -> None:
+    """Persist per-connection analytics to the session's active scenes (#R4).
+
+    Computes turn_latencies_ms list and aggregated counters, then merges them
+    into each scene's analytics JSON field so session-end analytics can aggregate.
+    """
+    if not session_id or analytics["turn_count"] == 0:
+        return
+
+    try:
+        from relay.models import GameSession, Scene
+
+        async with _db.AsyncSessionLocal() as db:
+            # Find active scenes in this session
+            result = await db.execute(
+                select(Scene)
+                .join(GameSession)
+                .where(GameSession.id == session_id)
+                .where(Scene.status == "active")
+            )
+            scenes = list(result.scalars().all())
+
+            if not scenes:
+                return
+
+            # Distribute analytics to the most recent active scene
+            scene = scenes[-1]
+            scene_analytics = dict(scene.analytics or {})
+
+            # Merge connection analytics into scene analytics
+            scene_analytics["llm_call_count"] = scene_analytics.get("llm_call_count", 0) + analytics["llm_call_count"]
+            scene_analytics["check_pass_count"] = (
+                scene_analytics.get("check_pass_count", 0) + analytics["check_pass_count"]
+            )
+            scene_analytics["check_total_count"] = (
+                scene_analytics.get("check_total_count", 0) + analytics["check_total_count"]
+            )
+
+            # Compute average turn latency from this connection
+            if analytics["turn_count"] > 0:
+                avg_latency = analytics["total_turn_latency_ms"] // analytics["turn_count"]
+                latencies = scene_analytics.get("turn_latencies_ms", [])
+                latencies.append(avg_latency)
+                scene_analytics["turn_latencies_ms"] = latencies[-50:]  # Cap
+
+            scene.analytics = scene_analytics
+            await db.commit()
+
+        logger.info(
+            "Connection analytics flushed",
+            extra={
+                "session_id": session_id,
+                "llm_calls": analytics["llm_call_count"],
+                "turns": analytics["turn_count"],
+            },
+        )
+    except Exception:
+        # Analytics flush is best-effort — never crash on disconnect
+        logger.debug("Failed to flush connection analytics", exc_info=True)
 
 
 async def _authenticate(ws: WebSocket) -> SessionTokenPayload | None:
@@ -236,7 +312,7 @@ async def dialogue_ws(ws: WebSocket) -> None:
     # Send recovery data for any interrupted turns (#5: session-scoped)
     await _send_recovery_data(ws, player_id, session_id=session_id)
 
-    scene_histories: dict[str, list[dict[str, str]]] = {}
+    scene_histories: OrderedDict[str, list[dict[str, str]]] = OrderedDict()
     last_message_time: float = 0.0
     in_flight = False
 
@@ -283,7 +359,14 @@ async def dialogue_ws(ws: WebSocket) -> None:
                 )
                 continue
 
+            now = time.time()
+            if now - last_message_time < _RATE_LIMIT_SECONDS:
+                await _send_error(ws, "rate_limited", "Please wait before sending another message")
+                continue
+            last_message_time = now
+
             # (#2) turn_resume re-enters pipeline from last saved stage.
+            # Rate-limited because it triggers new LLM calls.
             if msg_type == "turn_resume":
                 await _handle_turn_resume(
                     ws,
@@ -294,16 +377,11 @@ async def dialogue_ws(ws: WebSocket) -> None:
                     session_mode=session_mode,
                     pending_check_proposals=pending_check_proposals,
                     world_id=world_id,
+                    session_id=session_id,
                     analytics=connection_analytics,
                     triggered_passive_elements=triggered_passive_elements,
                 )
                 continue
-
-            now = time.time()
-            if now - last_message_time < _RATE_LIMIT_SECONDS:
-                await _send_error(ws, "rate_limited", "Please wait before sending another message")
-                continue
-            last_message_time = now
 
             # (#R8) in_flight guard also covers pending check_confirm state
             if in_flight or pending_check_proposals:
@@ -351,9 +429,13 @@ async def dialogue_ws(ws: WebSocket) -> None:
         except Exception:
             pass
 
+    # Flush per-connection analytics to session on disconnect (#R4).
+    if connection_analytics["turn_count"] > 0:
+        await _flush_connection_analytics(session_id, connection_analytics)
+
 
 async def _get_or_load_history(
-    scene_histories: dict[str, list[dict[str, str]]],
+    scene_histories: OrderedDict[str, list[dict[str, str]]],
     scene_id: str,
 ) -> list[dict[str, str]] | None:
     """Return the history list for a scene, loading from DB on first access.
@@ -362,8 +444,11 @@ async def _get_or_load_history(
     in the database — callers should reject the turn.
 
     Caps total scenes per connection to _MAX_SCENES_PER_CONNECTION (#8).
+    Uses LRU eviction — most recently accessed scenes survive longest.
     """
     if scene_id in scene_histories:
+        # Move to end (most recently used) for LRU ordering.
+        scene_histories.move_to_end(scene_id)
         return scene_histories[scene_id]
 
     if scene_id:
@@ -377,11 +462,10 @@ async def _get_or_load_history(
     else:
         history = []
 
-    # Evict oldest scene if at capacity (#8).
-    if len(scene_histories) >= _MAX_SCENES_PER_CONNECTION and scene_id not in scene_histories:
-        oldest_key = next(iter(scene_histories))
-        del scene_histories[oldest_key]
-        logger.debug("Evicted oldest scene history", extra={"evicted_scene": oldest_key})
+    # Evict least-recently-used scene if at capacity (#8).
+    if len(scene_histories) >= _MAX_SCENES_PER_CONNECTION:
+        evicted_key, _ = scene_histories.popitem(last=False)  # Pop oldest (LRU)
+        logger.debug("Evicted LRU scene history", extra={"evicted_scene": evicted_key})
 
     scene_histories[scene_id] = history
     return history
@@ -539,19 +623,6 @@ async def _handle_rp_turn(
         await _send_error(ws, "not_found", f"NPC '{npc_id}' not found")
         return
 
-    ability_scores = character_sheet.get("ability_scores", {})
-    skill_profs = character_sheet.get("skill_proficiencies", [])
-    level = character_sheet.get("level", 1)
-    conditions = character_sheet.get("conditions", [])
-
-    # (#10) Synthesize exhaustion condition from integer field so the resolver sees it
-    exhaustion_level = character_sheet.get("exhaustion_level", 0)
-    if exhaustion_level and exhaustion_level > 0:
-        # Only add if not already present in conditions array
-        has_exhaustion = any(c.get("condition_id", "").startswith("exhaustion") for c in conditions)
-        if not has_exhaustion:
-            conditions = [*conditions, {"condition_id": f"exhaustion_{exhaustion_level}", "source": "character_state"}]
-
     # Load scene_state from DB — relay is source of truth (Keystone, #11).
     scene_state: dict = {}
     if scene_id:
@@ -565,6 +636,7 @@ async def _handle_rp_turn(
     # with this NPC, active companions, and scene atmosphere.
     game_context: GameStateContext | None = None
     character_id: str | None = None
+    char_mechanics: CharacterMechanics | None = None
     if session_id:
         character_id = await resolve_character_id(session_id)
         if character_id:
@@ -574,6 +646,37 @@ async def _handle_rp_turn(
                 npc_faction_id=getattr(npc, "faction_id", None),
                 scene_state=scene_state,
             )
+            # Keystone Principle: load authoritative mechanical stats from DB.
+            # NEVER trust client-supplied ability_scores/level/proficiencies
+            # for check resolution.
+            char_mechanics = await load_character_mechanics(character_id)
+
+    # Use DB-authoritative stats for check resolution; fall back to client data
+    # only if character_id resolution failed (e.g. disconnected session).
+    if char_mechanics is not None:
+        ability_scores = char_mechanics.ability_scores
+        skill_profs = char_mechanics.skill_proficiencies
+        level = char_mechanics.level
+        conditions = char_mechanics.conditions
+        exhaustion_level = char_mechanics.exhaustion_level
+    else:
+        # Fallback: use client-supplied data (degraded mode, logged as warning)
+        logger.warning(
+            "Using client-supplied character stats (no DB character found)",
+            extra={"session_id": session_id, "npc_id": npc_id},
+        )
+        ability_scores = character_sheet.get("ability_scores", {})
+        skill_profs = character_sheet.get("skill_proficiencies", [])
+        level = character_sheet.get("level", 1)
+        conditions = character_sheet.get("conditions", [])
+        exhaustion_level = character_sheet.get("exhaustion_level", 0)
+
+    # (#10) Synthesize exhaustion condition from integer field so the resolver sees it
+    if exhaustion_level and exhaustion_level > 0:
+        # Only add if not already present in conditions array
+        has_exhaustion = any(c.get("condition_id", "").startswith("exhaustion") for c in conditions)
+        if not has_exhaustion:
+            conditions = [*conditions, {"condition_id": f"exhaustion_{exhaustion_level}", "source": "character_state"}]
 
     # === Persist pending turn before any processing (Invariant #12) ===
     # (#2) If this is a resumed turn, use the pre-created turn_id
@@ -1287,12 +1390,13 @@ async def _handle_turn_resume(
     ws: WebSocket,
     msg: dict,
     client: anthropic.AsyncAnthropic,
-    scene_histories: dict[str, list[dict[str, str]]],
+    scene_histories: OrderedDict[str, list[dict[str, str]]],
     player_id: str,
     *,
     session_mode: str,
     pending_check_proposals: dict[str, dict],
     world_id: str = "",
+    session_id: str = "",
     analytics: dict | None = None,
     triggered_passive_elements: dict[str, list[str]] | None = None,
 ) -> None:
@@ -1450,6 +1554,7 @@ async def _handle_turn_resume(
         session_mode=session_mode,
         pending_check_proposals=pending_check_proposals,
         world_id=world_id,
+        session_id=session_id,
         analytics=analytics,
         triggered_passive_elements=triggered_passive_elements,
     )
