@@ -28,6 +28,8 @@ _EXEMPT_PATHS: frozenset[str] = frozenset(
     }
 )
 
+_EXEMPT_PREFIXES: tuple[str, ...] = ("/docs", "/redoc")
+
 _DEFAULT_RPM = 60
 _WINDOW = 60.0
 _EVICTION_THRESHOLD = 500
@@ -61,11 +63,18 @@ def clear_buckets() -> None:
     _buckets.clear()
 
 
-def _evict_stale() -> None:
-    """Remove buckets not accessed in _STALE_SECONDS. Called under lock."""
+def _find_stale_keys() -> list[str]:
+    """Identify stale bucket keys (can be called under lock — O(n) read only)."""
     now = time.monotonic()
-    stale_keys = [key for key, bucket in _buckets.items() if (now - bucket.last_refill) > _STALE_SECONDS]
-    for key in stale_keys:
+    return [key for key, bucket in _buckets.items() if (now - bucket.last_refill) > _STALE_SECONDS]
+
+
+def _evict_stale() -> None:
+    """Remove buckets not accessed in _STALE_SECONDS. Called under lock.
+
+    Legacy entry point kept for test compatibility.
+    """
+    for key in _find_stale_keys():
         del _buckets[key]
 
 
@@ -77,18 +86,37 @@ def _get_rate_limit_key(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def _is_exempt(path: str) -> bool:
+    """Check if a path is exempt from rate limiting."""
+    normalized = path.rstrip("/") or "/"
+    if normalized in _EXEMPT_PATHS:
+        return True
+    return normalized.startswith(_EXEMPT_PREFIXES)
+
+
 async def rate_limit_middleware(request: Request, call_next):
-    if request.url.path in _EXEMPT_PATHS:
+    if _is_exempt(request.url.path):
         return await call_next(request)
 
     key = _get_rate_limit_key(request)
 
+    # Fast path: check bucket and allow/deny under a short lock hold.
+    # Eviction is deferred to minimize lock contention.
+    stale_keys: list[str] = []
     async with _buckets_lock:
         if len(_buckets) > _EVICTION_THRESHOLD:
-            _evict_stale()
+            # Snapshot stale keys (O(n) read) but defer deletion
+            stale_keys = _find_stale_keys()
 
         bucket = _buckets.setdefault(key, _Bucket())
         allowed = bucket.allow()
+
+    # Evict stale buckets outside the hot path (non-blocking for other requests
+    # that arrived between the two lock acquisitions).
+    if stale_keys:
+        async with _buckets_lock:
+            for sk in stale_keys:
+                _buckets.pop(sk, None)
 
     if not allowed:
         logger.warning(

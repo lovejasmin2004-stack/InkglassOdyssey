@@ -13,6 +13,7 @@ from relay.auth.tokens import AccountTokenPayload, SessionTokenPayload, decode_t
 logger = logging.getLogger(__name__)
 
 # Paths that skip token validation entirely.
+# Matched after stripping trailing slashes to handle both /health and /health/.
 _PUBLIC_PATHS: frozenset[str] = frozenset(
     {
         "/health",
@@ -22,10 +23,27 @@ _PUBLIC_PATHS: frozenset[str] = frozenset(
     }
 )
 
+# Prefix paths — any request starting with these skips auth.
+# Covers /docs/oauth2-redirect, /redoc/ sub-resources, etc.
+_PUBLIC_PREFIXES: tuple[str, ...] = ("/docs", "/redoc")
+
+
+def _is_public(path: str) -> bool:
+    """Check if a request path is public (no auth required).
+
+    Handles trailing slashes and prefix matching for doc sub-routes.
+    Note: WebSocket upgrades bypass HTTP middleware entirely — WebSocket
+    auth is handled inline in each WS endpoint (see dialogue.py _authenticate).
+    """
+    normalized = path.rstrip("/") or "/"
+    if normalized in _PUBLIC_PATHS:
+        return True
+    return normalized.startswith(_PUBLIC_PREFIXES)
+
 
 async def auth_middleware(request: Request, call_next):
     """Starlette middleware: validates JWT on every non-public request."""
-    if request.url.path in _PUBLIC_PATHS:
+    if _is_public(request.url.path):
         return await call_next(request)
 
     auth_header = request.headers.get("Authorization", "")

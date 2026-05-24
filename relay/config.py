@@ -23,11 +23,31 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _check_required_secrets(self) -> Settings:
+        """Validate secrets are set.
+
+        jwt_secret is REQUIRED in all environments (staging + production).
+        In development, an empty secret is only allowed if ALLOW_EMPTY_SECRETS
+        is explicitly set — otherwise a predictable dev-only fallback is used
+        to prevent accidental empty-string HMAC keys.
+
+        anthropic_api_key and admin_secret are required in production only
+        (tests and dev can run without a live LLM or admin panel).
+        """
+        # JWT secret: always required (empty string HMAC = trivially forgeable tokens)
+        if not self.jwt_secret:
+            if self.environment == "development":
+                # Use a fixed dev-only key so decode_token() never operates on ""
+                self.jwt_secret = "dev-only-insecure-key-do-not-use-in-prod"
+            else:
+                raise ValueError(
+                    "INKGLASS_JWT_SECRET must be set in staging/production. "
+                    "Empty JWT secret allows trivial token forgery."
+                )
+
+        # Other secrets: required in production only
         missing = []
         if not self.anthropic_api_key:
             missing.append("ANTHROPIC_API_KEY")
-        if not self.jwt_secret:
-            missing.append("INKGLASS_JWT_SECRET")
         if not self.admin_secret:
             missing.append("ADMIN_SECRET")
         if missing and self.environment == "production":
