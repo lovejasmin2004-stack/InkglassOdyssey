@@ -206,17 +206,20 @@ async def post_attack(
     new_hp = max(0, target.hp_current - dmg["final_damage"])
     target.hp_current = new_hp
 
-    await log_hp_change(db, HPChange(
-        character_id=target.id,
-        value=-dmg["final_damage"],
-        damage_type=dmg.get("damage_type"),
-        hp_before=hp_before,
-        hp_after=new_hp,
-        hp_max=target.hp_max,
-        source="combat_attack",
-        source_id=attacker.id,
-        reason=f"attack with {body.weapon.get('name', 'weapon')}",
-    ))
+    await log_hp_change(
+        db,
+        HPChange(
+            character_id=target.id,
+            value=-dmg["final_damage"],
+            damage_type=dmg.get("damage_type"),
+            hp_before=hp_before,
+            hp_after=new_hp,
+            hp_max=target.hp_max,
+            source="combat_attack",
+            source_id=attacker.id,
+            reason=f"attack with {body.weapon.get('name', 'weapon')}",
+        ),
+    )
 
     entered_death = False
     if new_hp == 0:
@@ -228,23 +231,29 @@ async def post_attack(
             target.death_state_exhaustion_gained = ds.get("death_state_exhaustion_gained", 1)
             entered_death = True
 
-            await log_death_state(db, DeathStateChange(
-                character_id=target.id,
-                entered=True,
-                hp_before=hp_before,
-                hp_after=0,
-                exhaustion_level=target.exhaustion_level,
-                source="combat_attack",
-                reason=f"reduced to 0 HP by {attacker.id}",
-            ))
-            if target.exhaustion_level != exhaustion_before:
-                await log_exhaustion_change(db, ExhaustionChange(
+            await log_death_state(
+                db,
+                DeathStateChange(
                     character_id=target.id,
-                    old_level=exhaustion_before,
-                    new_level=target.exhaustion_level,
-                    source="death_state",
-                    reason="entered death state",
-                ))
+                    entered=True,
+                    hp_before=hp_before,
+                    hp_after=0,
+                    exhaustion_level=target.exhaustion_level,
+                    source="combat_attack",
+                    reason=f"reduced to 0 HP by {attacker.id}",
+                ),
+            )
+            if target.exhaustion_level != exhaustion_before:
+                await log_exhaustion_change(
+                    db,
+                    ExhaustionChange(
+                        character_id=target.id,
+                        old_level=exhaustion_before,
+                        new_level=target.exhaustion_level,
+                        source="death_state",
+                        reason="entered death state",
+                    ),
+                )
 
     await db.commit()
 
@@ -322,17 +331,20 @@ async def post_save(
             defender.hp_current = max(0, defender.hp_current - dmg_result["final_damage"])
             defender_hp_after = defender.hp_current
 
-            await log_hp_change(db, HPChange(
-                character_id=defender.id,
-                value=-dmg_result["final_damage"],
-                damage_type=body.damage_type,
-                hp_before=defender_hp_before,
-                hp_after=defender_hp_after,
-                hp_max=defender.hp_max,
-                source="combat_save",
-                source_id=attacker.id,
-                reason=f"failed {body.save_type} save",
-            ))
+            await log_hp_change(
+                db,
+                HPChange(
+                    character_id=defender.id,
+                    value=-dmg_result["final_damage"],
+                    damage_type=body.damage_type,
+                    hp_before=defender_hp_before,
+                    hp_after=defender_hp_after,
+                    hp_max=defender.hp_max,
+                    source="combat_save",
+                    source_id=attacker.id,
+                    reason=f"failed {body.save_type} save",
+                ),
+            )
 
         if body.applies_condition:
             cid = body.applies_condition.get("condition_id", "")
@@ -342,14 +354,17 @@ async def post_save(
             defender.conditions = conditions
             condition_applied = cid
 
-            await log_condition_change(db, ConditionChange(
-                character_id=defender.id,
-                condition_id=cid,
-                action="add",
-                duration_turns=dur,
-                source=body.attacker_id,
-                reason=f"failed {body.save_type} save",
-            ))
+            await log_condition_change(
+                db,
+                ConditionChange(
+                    character_id=defender.id,
+                    condition_id=cid,
+                    action="add",
+                    duration_turns=dur,
+                    source=body.attacker_id,
+                    reason=f"failed {body.save_type} save",
+                ),
+            )
     elif body.half_on_save and body.damage_dice:
         from relay.combat.resolver import roll_dice
 
@@ -371,17 +386,20 @@ async def post_save(
         defender.hp_current = max(0, defender.hp_current - dmg_result["final_damage"])
         defender_hp_after = defender.hp_current
 
-        await log_hp_change(db, HPChange(
-            character_id=defender.id,
-            value=-dmg_result["final_damage"],
-            damage_type=body.damage_type,
-            hp_before=defender_hp_before,
-            hp_after=defender_hp_after,
-            hp_max=defender.hp_max,
-            source="combat_save_half",
-            source_id=attacker.id,
-            reason=f"passed {body.save_type} save (half damage)",
-        ))
+        await log_hp_change(
+            db,
+            HPChange(
+                character_id=defender.id,
+                value=-dmg_result["final_damage"],
+                damage_type=body.damage_type,
+                hp_before=defender_hp_before,
+                hp_after=defender_hp_after,
+                hp_max=defender.hp_max,
+                source="combat_save_half",
+                source_id=attacker.id,
+                reason=f"passed {body.save_type} save (half damage)",
+            ),
+        )
 
     await db.commit()
 
@@ -429,28 +447,34 @@ async def post_heal(
         if left_death:
             # (#6) Reset death state exhaustion counter on recovery
             target.death_state_exhaustion_gained = 0
-            await log_death_state(db, DeathStateChange(
-                character_id=target.id,
-                entered=False,
-                hp_before=hp_before,
-                hp_after=target.hp_current,
-                exhaustion_level=target.exhaustion_level,
-                source="healing",
-                reason="healed out of death state",
-            ))
+            await log_death_state(
+                db,
+                DeathStateChange(
+                    character_id=target.id,
+                    entered=False,
+                    hp_before=hp_before,
+                    hp_after=target.hp_current,
+                    exhaustion_level=target.exhaustion_level,
+                    source="healing",
+                    reason="healed out of death state",
+                ),
+            )
     else:
         target.hp_current = min(target.hp_current + body.healing, target.hp_max)
         left_death = False
 
-    await log_hp_change(db, HPChange(
-        character_id=target.id,
-        value=body.healing,
-        hp_before=hp_before,
-        hp_after=target.hp_current,
-        hp_max=target.hp_max,
-        source="healing",
-        reason="healing applied",
-    ))
+    await log_hp_change(
+        db,
+        HPChange(
+            character_id=target.id,
+            value=body.healing,
+            hp_before=hp_before,
+            hp_after=target.hp_current,
+            hp_max=target.hp_max,
+            source="healing",
+            reason="healing applied",
+        ),
+    )
 
     await db.commit()
 
@@ -519,22 +543,28 @@ async def post_rest(
     # Short rest: Phase 0 — no mechanical effect beyond marking the rest.
     # Hit-dice spending will be added when resource tracking is implemented.
 
-    await log_rest(db, RestEffect(
-        character_id=char.id,
-        rest_type=body.rest_type,
-        hp_before=hp_before,
-        hp_after=char.hp_current,
-        exhaustion_before=exhaustion_before,
-        exhaustion_after=char.exhaustion_level,
-    ))
-    if exhaustion_before != char.exhaustion_level:
-        await log_exhaustion_change(db, ExhaustionChange(
+    await log_rest(
+        db,
+        RestEffect(
             character_id=char.id,
-            old_level=exhaustion_before,
-            new_level=char.exhaustion_level,
-            source="rest",
-            reason=f"{body.rest_type} rest",
-        ))
+            rest_type=body.rest_type,
+            hp_before=hp_before,
+            hp_after=char.hp_current,
+            exhaustion_before=exhaustion_before,
+            exhaustion_after=char.exhaustion_level,
+        ),
+    )
+    if exhaustion_before != char.exhaustion_level:
+        await log_exhaustion_change(
+            db,
+            ExhaustionChange(
+                character_id=char.id,
+                old_level=exhaustion_before,
+                new_level=char.exhaustion_level,
+                source="rest",
+                reason=f"{body.rest_type} rest",
+            ),
+        )
 
     await db.commit()
 

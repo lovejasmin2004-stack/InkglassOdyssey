@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from relay.companions.relationship import (
     DEFAULT_RELATIONSHIP_TIERS,
     RELATIONSHIP_MAX,
