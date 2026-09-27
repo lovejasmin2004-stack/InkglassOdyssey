@@ -174,10 +174,7 @@ async def _flush_connection_analytics(session_id: str, analytics: dict) -> None:
         async with _db.AsyncSessionLocal() as db:
             # Find active scenes in this session
             result = await db.execute(
-                select(Scene)
-                .join(GameSession)
-                .where(GameSession.id == session_id)
-                .where(Scene.status == "active")
+                select(Scene).join(GameSession).where(GameSession.id == session_id).where(Scene.status == "active")
             )
             scenes = list(result.scalars().all())
 
@@ -651,25 +648,23 @@ async def _handle_rp_turn(
             # for check resolution.
             char_mechanics = await load_character_mechanics(character_id)
 
-    # Use DB-authoritative stats for check resolution; fall back to client data
-    # only if character_id resolution failed (e.g. disconnected session).
-    if char_mechanics is not None:
-        ability_scores = char_mechanics.ability_scores
-        skill_profs = char_mechanics.skill_proficiencies
-        level = char_mechanics.level
-        conditions = char_mechanics.conditions
-        exhaustion_level = char_mechanics.exhaustion_level
-    else:
-        # Fallback: use client-supplied data (degraded mode, logged as warning)
+    # Check resolution uses DB-authoritative stats only (Invariant #1). If the
+    # session has no character on record, refuse the turn rather than fall back
+    # to client-supplied stats.
+    if char_mechanics is None:
         logger.warning(
-            "Using client-supplied character stats (no DB character found)",
+            "RP turn rejected: no character found for session",
             extra={"session_id": session_id, "npc_id": npc_id},
         )
-        ability_scores = character_sheet.get("ability_scores", {})
-        skill_profs = character_sheet.get("skill_proficiencies", [])
-        level = character_sheet.get("level", 1)
-        conditions = character_sheet.get("conditions", [])
-        exhaustion_level = character_sheet.get("exhaustion_level", 0)
+        if resume_turn_id := msg.get("_resume_turn_id"):
+            await fail_turn(resume_turn_id, "character_not_found")
+        await _send_error(ws, "character_not_found", "No character is linked to this session")
+        return
+    ability_scores = char_mechanics.ability_scores
+    skill_profs = char_mechanics.skill_proficiencies
+    level = char_mechanics.level
+    conditions = char_mechanics.conditions
+    exhaustion_level = char_mechanics.exhaustion_level
 
     # (#10) Synthesize exhaustion condition from integer field so the resolver sees it
     if exhaustion_level and exhaustion_level > 0:
