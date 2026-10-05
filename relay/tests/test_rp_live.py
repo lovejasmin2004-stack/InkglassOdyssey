@@ -30,7 +30,7 @@ ANDALU = {
 
 
 async def main() -> None:
-    token = create_account_token(player_id="player_001", tier=1)
+    token = create_account_token(player_id="player_001", tier=2)
     port = sys.argv[1] if len(sys.argv) > 1 else "8000"
     uri = f"ws://127.0.0.1:{port}/dialogue"
 
@@ -42,7 +42,7 @@ async def main() -> None:
         # --- send RP turn with prose that should trigger a check ---
         turn = {
             "type": "rp_turn",
-            "npc_id": "seta_inkglass_dark",
+            "npc_id": "seta",
             "text": (
                 "Andalu steps closer to the workbench, eyes tracing the vials and instruments. "
                 "Something about the arrangement feels deliberate — not just organised, hidden. "

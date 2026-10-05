@@ -33,7 +33,7 @@ from relay.schemas import GatheringNode
 
 SAMPLE_RECIPE = {
     "id": "iron_longsword_recipe",
-    "world_id": "inkglass_dark",
+    "world_id": "wha_au",
     "name": "Iron Longsword",
     "output_item_id": "iron_longsword",
     "output_quantity": 1,
@@ -372,7 +372,7 @@ def crafter_id(db_client, auth_header):
     resp = db_client.post(
         "/character",
         json={
-            "world_id": "inkglass_dark",
+            "world_id": "wha_au",
             "name": "Forgemaster Kael",
             "specialisation_path_id": "warrior",
             "ability_scores": {
@@ -859,7 +859,7 @@ class TestLogItemTransactionHelper:
         char = MagicMock()
         char.player_id = "p1"
         char.id = "c1"
-        char.world_id = "inkglass_dark"
+        char.world_id = "wha_au"
         char.wallet = {"gold": 100}
 
         await log_item_transaction(
@@ -1194,6 +1194,12 @@ class TestGatheringNodeValidation:
 
 # Import cooldown constant for test assertions
 from relay.endpoints.craft import _GATHER_COOLDOWN_SECONDS  # noqa: E402
+
+
+@pytest.fixture()
+def auth_header():
+    """This file's content lives in wha_au, a Tier 2 world, so the account needs Tier 2."""
+    return {"Authorization": f"Bearer {create_account_token(player_id='player_001', tier=2)}"}
 
 
 def _make_auth_header() -> dict:

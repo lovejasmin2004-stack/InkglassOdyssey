@@ -34,7 +34,7 @@ async def main() -> None:
     base_url = f"http://127.0.0.1:{port}"
     ws_uri = f"ws://127.0.0.1:{port}/dialogue"
 
-    token = create_account_token(player_id="player_001", tier=1)
+    token = create_account_token(player_id="player_001", tier=2)
     headers = {"Authorization": f"Bearer {token}"}
 
     async with httpx.AsyncClient(base_url=base_url) as http:
@@ -43,7 +43,7 @@ async def main() -> None:
         resp = await http.post(
             "/character",
             json={
-                "world_id": "inkglass_dark",
+                "world_id": "wha_au",
                 "name": "Andalu",
                 "specialisation_path_id": "scout",
                 "ability_scores": ANDALU["ability_scores"],
@@ -60,7 +60,7 @@ async def main() -> None:
         print("\n=== Starting session ===")
         resp = await http.post(
             "/session/start",
-            json={"character_id": character_id, "world_id": "inkglass_dark"},
+            json={"character_id": character_id, "world_id": "wha_au"},
             headers=headers,
         )
         assert resp.status_code == 201, f"Session start failed: {resp.text}"
@@ -76,7 +76,7 @@ async def main() -> None:
             "/scene",
             json={
                 "session_id": session_id,
-                "npc_id": "seta_inkglass_dark",
+                "npc_id": "seta",
                 "mode": "quickchat",
             },
             headers=headers,
@@ -97,7 +97,7 @@ async def main() -> None:
             # Send quickchat turn
             turn = {
                 "type": "quickchat_turn",
-                "npc_id": "seta_inkglass_dark",
+                "npc_id": "seta",
                 "text": "Hello Seta. What are you working on today?",
             }
             await ws.send(json.dumps(turn))

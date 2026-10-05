@@ -1381,6 +1381,36 @@ class TestShopPriceModifiersSchema:
 class TestGatherTransactionLog:
     """#11 — successful gather creates a transaction log entry."""
 
+    @pytest.fixture()
+    def auth_header(self):
+        """wha_au is a Tier 2 world, so this account needs Tier 2."""
+        return {"Authorization": f"Bearer {create_account_token('player_001', tier=2)}"}
+
+    @pytest.fixture()
+    def character_id(self, db_client, auth_header):
+        """A character in wha_au, where the thornveil_lowlands gathering region lives."""
+        resp = db_client.post(
+            "/character",
+            json={
+                "world_id": "wha_au",
+                "name": "Kael",
+                "specialisation_path_id": "scout",
+                "ability_scores": {
+                    "strength": 10,
+                    "dexterity": 14,
+                    "constitution": 12,
+                    "intelligence": 12,
+                    "wisdom": 14,
+                    "charisma": 10,
+                },
+                "skill_proficiencies": ["stealth", "perception"],
+                "saving_throw_proficiencies": ["dexterity", "wisdom"],
+            },
+            headers=auth_header,
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()["id"]
+
     def test_gather_creates_transaction(
         self,
         db_client,

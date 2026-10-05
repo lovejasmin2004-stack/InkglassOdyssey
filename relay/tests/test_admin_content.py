@@ -19,7 +19,7 @@ from relay.admin.app import app
 from relay.config import settings
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_WORLD = "inkglass_dark"
+_WORLD = "wha_au"
 
 
 @pytest.fixture()

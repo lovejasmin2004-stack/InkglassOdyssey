@@ -69,7 +69,7 @@ def session_and_scene(db_client, auth_header, character_id):
 
     scene = db_client.post(
         "/scene",
-        json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+        json={"session_id": session_id, "npc_id": "seta", "mode": "rp"},
         headers=auth_header,
     )
     assert scene.status_code == 201
@@ -89,7 +89,7 @@ class TestPendingTurnPersistence:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Andalu looks around the room.",
                 character_snapshot={"level": 6},
@@ -120,7 +120,7 @@ class TestPendingTurnPersistence:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="She examines the vials.",
             )
@@ -168,7 +168,7 @@ class TestPendingTurnPersistence:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="She opens the cabinet.",
             )
@@ -199,7 +199,7 @@ class TestPendingTurnPersistence:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Test input.",
             )
@@ -223,7 +223,7 @@ class TestPendingTurnPersistence:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Andalu reaches for the book.",
             )
@@ -255,7 +255,7 @@ class TestPendingTurnPersistence:
 
         scene1 = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            json={"session_id": session_id, "npc_id": "seta", "mode": "rp"},
             headers=auth_header,
         ).json()["id"]
 
@@ -271,7 +271,7 @@ class TestPendingTurnPersistence:
             create_pending_turn(
                 scene_id=scene1,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Turn in scene 1",
             )
@@ -306,7 +306,7 @@ class TestStageTransitionValidation:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Forward test.",
             )
@@ -331,7 +331,7 @@ class TestStageTransitionValidation:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Backward test.",
             )
@@ -355,7 +355,7 @@ class TestStageTransitionValidation:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Complete test.",
             )
@@ -375,7 +375,7 @@ class TestStageTransitionValidation:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Fail test.",
             )
@@ -400,7 +400,7 @@ class TestIdempotencyGuard:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Idempotent test.",
             )
@@ -422,7 +422,7 @@ class TestIdempotencyGuard:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Check persist test.",
             )
@@ -452,7 +452,7 @@ class TestStaleTurnTimeout:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Stale test.",
             )
@@ -480,7 +480,7 @@ class TestStaleTurnTimeout:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Fresh test.",
             )
@@ -509,7 +509,7 @@ class TestStaleTurnTimeout:
         session_id = sess.json()["session_id"]
         scene = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            json={"session_id": session_id, "npc_id": "seta", "mode": "rp"},
             headers=auth_header,
         )
         scene_id = scene.json()["id"]
@@ -518,7 +518,7 @@ class TestStaleTurnTimeout:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Session scope test.",
             )
@@ -548,7 +548,7 @@ class TestRetryTracking:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Retry test.",
                 parent_turn_id="pt_original123",
@@ -569,7 +569,7 @@ class TestRetryTracking:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="No retry.",
             )
@@ -593,7 +593,7 @@ class TestRetryTracking:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Same input here.",
             )
@@ -604,7 +604,7 @@ class TestRetryTracking:
             create_pending_turn(
                 scene_id=scene_id,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Same input here.",
             )
@@ -630,7 +630,7 @@ class TestSessionScopedRecovery:
         session1_id = sess1.json()["session_id"]
         scene1 = db_client.post(
             "/scene",
-            json={"session_id": session1_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            json={"session_id": session1_id, "npc_id": "seta", "mode": "rp"},
             headers=auth_header,
         ).json()["id"]
 
@@ -638,7 +638,7 @@ class TestSessionScopedRecovery:
             create_pending_turn(
                 scene_id=scene1,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Session 1 turn.",
             )
@@ -656,7 +656,7 @@ class TestSessionScopedRecovery:
         session2_id = sess2.json()["session_id"]
         scene2 = db_client.post(
             "/scene",
-            json={"session_id": session2_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            json={"session_id": session2_id, "npc_id": "seta", "mode": "rp"},
             headers=auth_header,
         ).json()["id"]
 
@@ -664,7 +664,7 @@ class TestSessionScopedRecovery:
             create_pending_turn(
                 scene_id=scene2,
                 player_id="player_001",
-                npc_id="seta_inkglass_dark",
+                npc_id="seta",
                 turn_type="rp",
                 player_input="Session 2 turn.",
             )

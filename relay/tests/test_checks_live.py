@@ -31,7 +31,7 @@ ANDALU = {
 }
 
 
-async def send_rp_turn(ws, text: str, npc_id: str = "seta_inkglass_dark") -> dict:
+async def send_rp_turn(ws, text: str, npc_id: str = "seta") -> dict:
     """Send an RP turn and collect all response messages."""
     turn = {
         "type": "rp_turn",
@@ -79,7 +79,7 @@ async def send_rp_turn(ws, text: str, npc_id: str = "seta_inkglass_dark") -> dic
 async def main() -> None:
     port = sys.argv[1] if len(sys.argv) > 1 else "8000"
     ws_uri = f"ws://127.0.0.1:{port}/dialogue"
-    token = create_account_token(player_id="player_checks", tier=1)
+    token = create_account_token(player_id="player_checks", tier=2)
 
     async with websockets.connect(ws_uri) as ws:
         await ws.send(json.dumps({"type": "auth", "token": token}))

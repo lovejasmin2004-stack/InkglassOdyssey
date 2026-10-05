@@ -41,7 +41,7 @@ async def main() -> None:
     base_url = f"http://127.0.0.1:{port}"
     ws_uri = f"ws://127.0.0.1:{port}/dialogue"
 
-    token = create_account_token(player_id="player_recovery", tier=1)
+    token = create_account_token(player_id="player_recovery", tier=2)
     headers = {"Authorization": f"Bearer {token}"}
 
     async with httpx.AsyncClient(base_url=base_url) as http:
@@ -50,7 +50,7 @@ async def main() -> None:
         resp = await http.post(
             "/character",
             json={
-                "world_id": "inkglass_dark",
+                "world_id": "wha_au",
                 "name": "Andalu",
                 "specialisation_path_id": "scout",
                 "ability_scores": ANDALU["ability_scores"],
@@ -65,7 +65,7 @@ async def main() -> None:
 
         resp = await http.post(
             "/session/start",
-            json={"character_id": character_id, "world_id": "inkglass_dark"},
+            json={"character_id": character_id, "world_id": "wha_au"},
             headers=headers,
         )
         assert resp.status_code == 201
@@ -74,7 +74,7 @@ async def main() -> None:
 
         resp = await http.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            json={"session_id": session_id, "npc_id": "seta", "mode": "rp"},
             headers=headers,
         )
         assert resp.status_code == 201
@@ -94,7 +94,7 @@ async def main() -> None:
                 # Send RP turn with scene_id for pending turn tracking
                 turn = {
                     "type": "rp_turn",
-                    "npc_id": "seta_inkglass_dark",
+                    "npc_id": "seta",
                     "scene_id": scene_id,
                     "text": (
                         "Andalu carefully lifts the lid of the ceramic container on the far shelf, "

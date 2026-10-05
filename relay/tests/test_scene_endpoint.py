@@ -73,7 +73,7 @@ def session_id(db_client, auth_header, character_id):
 def scene_id(db_client, auth_header, session_id):
     resp = db_client.post(
         "/scene",
-        json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+        json={"session_id": session_id, "npc_id": "seta", "mode": "rp"},
         headers=auth_header,
     )
     assert resp.status_code == 201
@@ -84,13 +84,13 @@ class TestSceneCreate:
     def test_create_scene(self, db_client, auth_header, session_id):
         resp = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark"},
+            json={"session_id": session_id, "npc_id": "seta"},
             headers=auth_header,
         )
         assert resp.status_code == 201
         data = resp.json()
         assert data["session_id"] == session_id
-        assert data["npc_id"] == "seta_inkglass_dark"
+        assert data["npc_id"] == "seta"
         assert data["mode"] == "rp"
         assert data["status"] == "active"
         assert data["turn_count"] == 0
@@ -98,7 +98,7 @@ class TestSceneCreate:
     def test_create_scene_quickchat_mode(self, db_client, auth_header, session_id):
         resp = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "quickchat"},
+            json={"session_id": session_id, "npc_id": "seta", "mode": "quickchat"},
             headers=auth_header,
         )
         assert resp.status_code == 201
@@ -107,7 +107,7 @@ class TestSceneCreate:
     def test_create_scene_invalid_mode_returns_422(self, db_client, auth_header, session_id):
         resp = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "combat"},
+            json={"session_id": session_id, "npc_id": "seta", "mode": "combat"},
             headers=auth_header,
         )
         assert resp.status_code == 422
@@ -116,7 +116,7 @@ class TestSceneCreate:
     def test_create_scene_session_not_found(self, db_client, auth_header):
         resp = db_client.post(
             "/scene",
-            json={"session_id": "nonexistent", "npc_id": "seta_inkglass_dark"},
+            json={"session_id": "nonexistent", "npc_id": "seta"},
             headers=auth_header,
         )
         assert resp.status_code == 404
@@ -125,7 +125,7 @@ class TestSceneCreate:
     def test_create_scene_other_player_session(self, db_client, auth_header, other_auth, session_id):
         resp = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark"},
+            json={"session_id": session_id, "npc_id": "seta"},
             headers=other_auth,
         )
         assert resp.status_code == 403
@@ -134,7 +134,7 @@ class TestSceneCreate:
         db_client.post(f"/session/{session_id}/end", json={}, headers=auth_header)
         resp = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark"},
+            json={"session_id": session_id, "npc_id": "seta"},
             headers=auth_header,
         )
         assert resp.status_code == 409
@@ -201,7 +201,7 @@ class TestScenePatch:
     def test_patch_scene_state_as_dm(self, db_client, dm_header, auth_header, session_id):
         scene_resp = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark"},
+            json={"session_id": session_id, "npc_id": "seta"},
             headers=auth_header,
         )
         scene_id = scene_resp.json()["id"]
@@ -217,7 +217,7 @@ class TestScenePatch:
     def test_patch_hidden_elements(self, db_client, dm_header, auth_header, session_id):
         scene_resp = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark"},
+            json={"session_id": session_id, "npc_id": "seta"},
             headers=auth_header,
         )
         scene_id = scene_resp.json()["id"]
@@ -234,7 +234,7 @@ class TestScenePatch:
     def test_patch_environmental_effects(self, db_client, dm_header, auth_header, session_id):
         scene_resp = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark"},
+            json={"session_id": session_id, "npc_id": "seta"},
             headers=auth_header,
         )
         scene_id = scene_resp.json()["id"]
