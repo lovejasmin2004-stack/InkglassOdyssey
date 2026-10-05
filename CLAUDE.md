@@ -151,7 +151,7 @@ inkglass/
 ├── requirements.txt                Pinned runtime + dev dependencies
 ├── alembic.ini
 ├── .claude/                        (planned) settings.json hooks, agents/, commands/
-├── .github/workflows/ci.yml        (planned) CI pipeline, see Section 7.5
+├── .github/workflows/ci.yml        CI pipeline, see Section 7.5
 ├── docs/
 │   ├── combat system.pdf
 │   ├── economy balance.pdf
@@ -222,7 +222,7 @@ Only `inkglass_dark` has content so far.
 
 ## 6. Schema Definitions
 
-All schemas are fully defined in docs/schemas reference.pdf. Pydantic models in relay/schemas.py mirror /schemas/*.json exactly. Content files are validated against their schema when saved through the Admin Workshop (relay/admin/reload.py). Repository-wide validation on every push is part of the planned CI pipeline (Section 7.5) and is not in place yet; until then, validate by hand before committing.
+All schemas are fully defined in docs/schemas reference.pdf. Pydantic models in relay/schemas.py mirror /schemas/*.json exactly. Content files are validated against their schema when saved through the Admin Workshop (relay/admin/reload.py). Every content file is also validated on every push by relay/tests/test_content_files.py (CI step 1), which reuses the Workshop's content-type registry; run it locally before committing.
 
 ## 7. Code Conventions
 
@@ -253,9 +253,9 @@ Filenames snake_case, match the `id` field. Lower-case ASCII only in IDs. Valida
 
 Every NPC file must pass the probe suite before merge. Shop/transport NPCs validated against their respective sub-schemas. See docs/content authoring.pdf for quality guidelines.
 
-### 7.5 CI Pipeline (GitHub Actions) — planned
+### 7.5 CI Pipeline (GitHub Actions)
 
-Not yet implemented: there is no `.github/workflows/` directory. Of the steps below, only 4, 5 (tests only) and 6 (`alembic check`) can run today; the probe suite and name blocklist do not exist yet. Target pipeline:
+`.github/workflows/ci.yml` runs on every push and pull request. Implemented: steps 1, 4, 6, and the test half of 5. Planned: step 2 (probe suite), step 3 (name blocklist) and mutation testing. When a content type is added, register it in `CONTENT_TYPES` in relay/admin/reload.py so both the Workshop and CI validate it.
 
 1. JSON schema validation (all content directories)
 2. NPC probe suite (voice, knowledge, manipulation resistance, animation)
@@ -314,7 +314,7 @@ Fandom AU: no canon dialogue, no canon names, no recognisable locations. NPC fil
 | 6 | Solo and multiplayer share content |
 | 7 | Lore is data, not code |
 | 8 | LLM is never authoritative over mechanical state |
-| 9 | Every NPC file includes manipulation-resistance examples (required by npc_personality schema; CI check planned) |
+| 9 | Every NPC file includes manipulation-resistance examples (required by npc_personality schema, minimum one; enforced in CI) |
 | 10 | RP mode and quick-chat mode are distinct and never mixed |
 | 11 | Animation directives are relay-validated before Unity receives them |
 | 12 | Session state persisted before processing (pending-turn) |
