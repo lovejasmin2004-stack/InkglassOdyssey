@@ -31,137 +31,390 @@
     ],
     "additionalProperties": false,
     "properties": {
-        "id": {"type": "string"},
-        "world_id": {"type": "string"},
-        "name": {"type": "string", "minLength": 1},
-        "entity_class": {"type": "string", "enum": ["humanoid", "creature", "spirit", "construct"]},
-        "role": {"type": "string"},
-        "level": {"type": "integer", "minimum": 1, "maximum": 20},
-        "hit_die": {"type": "integer", "enum": [6, 8, 10, 12]},
-        "personality_background": {"type": "string"},
+        "id": {
+            "type": "string",
+            "x-group": "identity",
+            "description": "Lower-case snake_case; must match the file name."
+        },
+        "world_id": {
+            "type": "string",
+            "x-group": "identity",
+            "description": "The world this NPC belongs to, for example wha_au."
+        },
+        "name": {
+            "type": "string",
+            "minLength": 1,
+            "x-group": "identity",
+            "description": "Full name as the AI should use it. Sent to the AI every turn."
+        },
+        "entity_class": {
+            "type": "string",
+            "enum": [
+                "humanoid",
+                "creature",
+                "spirit",
+                "construct"
+            ],
+            "x-group": "identity"
+        },
+        "role": {
+            "type": "string",
+            "x-group": "identity",
+            "description": "Their role as people would describe it, for example 'Apprentice Healer'. Sent to the AI every turn."
+        },
+        "level": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "x-group": "mechanics"
+        },
+        "hit_die": {
+            "type": "integer",
+            "enum": [
+                6,
+                8,
+                10,
+                12
+            ],
+            "x-group": "mechanics"
+        },
+        "personality_background": {
+            "type": "string",
+            "x-group": "personality",
+            "description": "Who they are now and why: temperament, history that still shapes them, how they treat others. Sent to the AI every turn."
+        },
         "goals": {
             "type": "object",
-            "required": ["immediate", "long_term"],
+            "required": [
+                "immediate",
+                "long_term"
+            ],
             "additionalProperties": false,
             "properties": {
-                "immediate": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-                "long_term": {"type": "array", "items": {"type": "string"}}
-            }
+                "immediate": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "minItems": 1,
+                    "description": "Goals for the next days or weeks."
+                },
+                "long_term": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Goals for years, or a lifetime."
+                }
+            },
+            "x-group": "personality",
+            "description": "What they're trying to do. Sent to the AI every turn."
         },
-        "weaknesses_fears": {"type": "string"},
-        "communication_style": {"type": "string"},
-        "power_narrative": {"type": "string"},
+        "weaknesses_fears": {
+            "type": "string",
+            "x-group": "personality",
+            "description": "What they fear, avoid, or won't look at. Sent to the AI in RP mode."
+        },
+        "communication_style": {
+            "type": "string",
+            "x-group": "voice",
+            "description": "Rhythm, vocabulary, habits of speech, and what they never say. Sent to the AI every turn."
+        },
+        "power_narrative": {
+            "type": "string",
+            "x-group": "personality",
+            "description": "Their abilities in story terms. Not sent to the AI yet; recorded for later systems."
+        },
         "knowledge_boundaries": {
             "type": "object",
-            "required": ["knows", "does_not_know"],
+            "required": [
+                "knows",
+                "does_not_know"
+            ],
             "additionalProperties": false,
             "properties": {
-                "knows": {"type": "array", "items": {"type": "string"}},
-                "does_not_know": {"type": "array", "items": {"type": "string"}}
-            }
+                "knows": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Things they know well enough to talk about."
+                },
+                "does_not_know": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Things they don't know. The AI deflects in character instead of inventing."
+                }
+            },
+            "x-group": "knowledge",
+            "description": "What they know and don't. The AI stays inside these limits. Sent to the AI every turn."
         },
         "relationships": {
             "type": "array",
             "items": {
                 "type": "object",
-                "required": ["npc_id", "relationship_type", "description"],
+                "required": [
+                    "npc_id",
+                    "relationship_type",
+                    "description"
+                ],
                 "additionalProperties": false,
                 "properties": {
-                    "npc_id": {"type": "string"},
+                    "npc_id": {
+                        "type": "string",
+                        "description": "The other NPC's file ID."
+                    },
                     "relationship_type": {
                         "type": "string",
-                        "enum": ["ally", "rival", "subordinate", "mentor", "family", "trading_partner", "unknown"]
+                        "enum": [
+                            "ally",
+                            "rival",
+                            "subordinate",
+                            "mentor",
+                            "family",
+                            "trading_partner",
+                            "unknown"
+                        ]
                     },
-                    "description": {"type": "string"}
+                    "description": {
+                        "type": "string",
+                        "description": "What they are to each other, and what each shows versus feels."
+                    }
                 }
-            }
+            },
+            "x-group": "knowledge",
+            "description": "People they know by name. Not sent to the AI yet; recorded for later systems."
         },
         "secrets": {
             "type": "array",
             "items": {
                 "type": "object",
-                "required": ["content", "reveal_condition", "secret_type"],
+                "required": [
+                    "content",
+                    "reveal_condition",
+                    "secret_type"
+                ],
                 "additionalProperties": false,
                 "properties": {
-                    "content": {"type": "string"},
+                    "content": {
+                        "type": "string",
+                        "description": "The secret itself, stated plainly."
+                    },
                     "reveal_condition": {
                         "type": "string",
-                        "enum": ["relationship_threshold", "quest_flag", "check_type_and_dc", "never"]
+                        "enum": [
+                            "relationship_threshold",
+                            "quest_flag",
+                            "check_type_and_dc",
+                            "never"
+                        ],
+                        "description": "relationship_threshold: trust earned; quest_flag: a story event; check_type_and_dc: a successful check; never: never revealed."
                     },
-                    "secret_type": {"type": "string", "enum": ["information", "identity"]},
-                    "reveal_threshold": {"type": "integer"},
-                    "reveal_quest_flag": {"type": "string"},
-                    "reveal_check_type": {"type": "string"},
-                    "reveal_check_dc": {"type": "integer"}
+                    "secret_type": {
+                        "type": "string",
+                        "enum": [
+                            "information",
+                            "identity"
+                        ],
+                        "description": "information: something they know; identity: who or what they really are."
+                    },
+                    "reveal_threshold": {
+                        "type": "integer",
+                        "description": "For relationship_threshold: the relationship score needed."
+                    },
+                    "reveal_quest_flag": {
+                        "type": "string",
+                        "description": "For quest_flag: the flag that unlocks it."
+                    },
+                    "reveal_check_type": {
+                        "type": "string",
+                        "description": "For check_type_and_dc: the skill, for example insight."
+                    },
+                    "reveal_check_dc": {
+                        "type": "integer",
+                        "description": "For check_type_and_dc: the difficulty, 5 to 30."
+                    }
                 }
             },
-            "minItems": 1
+            "minItems": 1,
+            "x-group": "knowledge",
+            "description": "What they hide and what reveals it. Not sent to the AI yet; recorded for later systems. Until secrets are wired in, anything the NPC must never reveal also belongs in their personality or a resistance example."
         },
         "few_shot_examples": {
             "type": "array",
             "items": {
                 "type": "object",
-                "required": ["player_input", "npc_response", "context_tag"],
+                "required": [
+                    "player_input",
+                    "npc_response",
+                    "context_tag"
+                ],
                 "additionalProperties": false,
                 "properties": {
-                    "player_input": {"type": "string"},
-                    "npc_response": {"type": "string"},
-                    "context_tag": {"type": "string", "enum": ["casual", "tense", "hostile", "transactional"]}
+                    "player_input": {
+                        "type": "string",
+                        "description": "What a player says or does."
+                    },
+                    "npc_response": {
+                        "type": "string",
+                        "description": "Their reply, written exactly as they'd say it."
+                    },
+                    "context_tag": {
+                        "type": "string",
+                        "enum": [
+                            "casual",
+                            "tense",
+                            "hostile",
+                            "transactional"
+                        ],
+                        "description": "The mood of the exchange."
+                    }
                 }
             },
-            "minItems": 2
+            "minItems": 2,
+            "x-group": "voice",
+            "description": "Sample exchanges covering different moods. At least two. Sent to the AI every turn."
         },
         "manipulation_resistance_examples": {
             "type": "array",
             "items": {
                 "type": "object",
-                "required": ["player_input", "npc_refusal"],
+                "required": [
+                    "player_input",
+                    "npc_refusal"
+                ],
                 "additionalProperties": false,
-                "properties": {"player_input": {"type": "string"}, "npc_refusal": {"type": "string"}}
+                "properties": {
+                    "player_input": {
+                        "type": "string",
+                        "description": "The manipulation attempt."
+                    },
+                    "npc_refusal": {
+                        "type": "string",
+                        "description": "How they refuse, in their own voice."
+                    }
+                }
             },
-            "minItems": 1
+            "minItems": 1,
+            "x-group": "voice",
+            "description": "How they refuse when a player flatters, threatens, lies, or tries to make them break character. At least one. Sent to the AI every turn."
         },
         "animation_profile": {
             "type": "object",
-            "required": ["default_stance", "default_gaze", "emotional_state_to_animation"],
+            "required": [
+                "default_stance",
+                "default_gaze",
+                "emotional_state_to_animation"
+            ],
             "additionalProperties": false,
             "properties": {
-                "default_stance": {"type": "string"},
-                "default_gaze": {"type": "string"},
+                "default_stance": {
+                    "type": "string"
+                },
+                "default_gaze": {
+                    "type": "string"
+                },
                 "emotional_state_to_animation": {
                     "type": "object",
-                    "additionalProperties": {"type": "string"},
+                    "additionalProperties": {
+                        "type": "string"
+                    },
                     "minProperties": 3
                 },
-                "movement_triggers": {"type": "array", "items": {"type": "string"}}
-            }
+                "movement_triggers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            },
+            "x-group": "animation",
+            "description": "Animation IDs only; not prose."
         },
         "world_position": {
             "type": "object",
-            "required": ["region_id"],
+            "required": [
+                "region_id"
+            ],
             "additionalProperties": false,
             "properties": {
-                "region_id": {"type": "string"},
+                "region_id": {
+                    "type": "string"
+                },
                 "coordinates": {
                     "type": "object",
-                    "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}}
+                    "properties": {
+                        "x": {
+                            "type": "number"
+                        },
+                        "y": {
+                            "type": "number"
+                        },
+                        "z": {
+                            "type": "number"
+                        }
+                    }
                 }
-            }
+            },
+            "x-group": "world",
+            "description": "Where they're usually found."
         },
         "schedule": {
             "type": "array",
             "items": {
                 "type": "object",
-                "required": ["time_range", "position"],
+                "required": [
+                    "time_range",
+                    "position"
+                ],
                 "additionalProperties": false,
-                "properties": {"time_range": {"type": "string"}, "position": {"type": "string"}}
-            }
+                "properties": {
+                    "time_range": {
+                        "type": "string"
+                    },
+                    "position": {
+                        "type": "string"
+                    }
+                }
+            },
+            "x-group": "world",
+            "description": "Where they are at different times of day (24-hour ranges like 06:00-12:00)."
         },
-        "ability_scores": {"type": "object", "additionalProperties": {"type": "integer"}},
-        "ac": {"type": "integer", "minimum": 0},
-        "saving_throw_proficiencies": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2},
-        "skill_proficiencies": {"type": "array", "items": {"type": "string"}},
-        "hp_max": {"type": "integer", "minimum": 1},
+        "ability_scores": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "integer"
+            },
+            "x-group": "mechanics"
+        },
+        "ac": {
+            "type": "integer",
+            "minimum": 0,
+            "x-group": "mechanics"
+        },
+        "saving_throw_proficiencies": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "x-group": "mechanics"
+        },
+        "skill_proficiencies": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "x-group": "mechanics"
+        },
+        "hp_max": {
+            "type": "integer",
+            "minimum": 1,
+            "x-group": "mechanics"
+        },
         "resistances": {
             "type": "array",
             "items": {
@@ -182,7 +435,8 @@
                     "force"
                 ]
             },
-            "uniqueItems": true
+            "uniqueItems": true,
+            "x-group": "mechanics"
         },
         "vulnerabilities": {
             "type": "array",
@@ -204,7 +458,8 @@
                     "force"
                 ]
             },
-            "uniqueItems": true
+            "uniqueItems": true,
+            "x-group": "mechanics"
         },
         "immunities": {
             "type": "array",
@@ -226,98 +481,267 @@
                     "force"
                 ]
             },
-            "uniqueItems": true
+            "uniqueItems": true,
+            "x-group": "mechanics"
         },
-        "conditions": {"type": "array", "items": {"type": "object"}},
-        "notable_equipment": {"type": "array", "items": {"type": "string"}},
-        "faction_id": {"type": "string"},
+        "conditions": {
+            "type": "array",
+            "items": {
+                "type": "object"
+            },
+            "x-group": "mechanics"
+        },
+        "notable_equipment": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "x-group": "mechanics",
+            "description": "Item IDs they carry."
+        },
+        "faction_id": {
+            "type": "string",
+            "x-group": "identity",
+            "description": "Faction they belong to, if any."
+        },
         "consequence_profile": {
             "type": "string",
-            "enum": ["protected", "combatant", "hostile", "ephemeral"],
+            "enum": [
+                "protected",
+                "combatant",
+                "hostile",
+                "ephemeral"
+            ],
             "default": "protected",
-            "description": "How the consequence system treats violence against this NPC. protected=full consequences, combatant=no crime flags but track defeat, hostile=no consequences but track kill, ephemeral=no tracking at all."
+            "description": "How the consequence system treats violence against this NPC. protected=full consequences, combatant=no crime flags but track defeat, hostile=no consequences but track kill, ephemeral=no tracking at all.",
+            "x-group": "mechanics"
         },
         "generated": {
             "type": "boolean",
             "default": false,
-            "description": "True if this NPC was created by the template generation system (Tier 2). Authored NPCs (Tier 1) omit this or set it to false."
+            "description": "True if this NPC was created by the template generation system (Tier 2). Authored NPCs (Tier 1) omit this or set it to false.",
+            "x-group": "system"
         },
         "source_template_id": {
             "type": "string",
-            "description": "The template ID used to generate this NPC. Only present on generated NPCs."
+            "description": "The template ID used to generate this NPC. Only present on generated NPCs.",
+            "x-group": "system"
         },
         "shop_data": {
             "type": "object",
-            "required": ["inventory", "pricing_policy", "restock_schedule"],
+            "required": [
+                "inventory",
+                "pricing_policy",
+                "restock_schedule"
+            ],
             "additionalProperties": false,
             "properties": {
                 "inventory": {
                     "type": "array",
                     "items": {
                         "type": "object",
-                        "required": ["item_id", "stock_quantity", "markup_percentage"],
+                        "required": [
+                            "item_id",
+                            "stock_quantity",
+                            "markup_percentage"
+                        ],
                         "additionalProperties": false,
                         "properties": {
-                            "item_id": {"type": "string"},
-                            "stock_quantity": {"type": "integer", "minimum": 0},
-                            "markup_percentage": {"type": "number"}
+                            "item_id": {
+                                "type": "string"
+                            },
+                            "stock_quantity": {
+                                "type": "integer",
+                                "minimum": 0
+                            },
+                            "markup_percentage": {
+                                "type": "number"
+                            }
                         }
                     }
                 },
-                "pricing_policy": {"type": "string"},
-                "restock_schedule": {"type": "string", "enum": ["daily", "weekly", "never"]},
+                "pricing_policy": {
+                    "type": "string"
+                },
+                "restock_schedule": {
+                    "type": "string",
+                    "enum": [
+                        "daily",
+                        "weekly",
+                        "never"
+                    ]
+                },
                 "access_prerequisites": {
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
-                        "faction_standing_threshold": {"type": "integer"},
-                        "level_requirement": {"type": "integer"},
-                        "quest_flags": {"type": "array", "items": {"type": "string"}}
+                        "faction_standing_threshold": {
+                            "type": "integer"
+                        },
+                        "level_requirement": {
+                            "type": "integer"
+                        },
+                        "quest_flags": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
-            }
+            },
+            "x-group": "system"
         },
         "companion_data": {
             "type": "object",
-            "required": ["recruitment", "combat_profile", "ambient_behavior", "loyalty_strain_threshold"],
+            "required": [
+                "recruitment",
+                "combat_profile",
+                "ambient_behavior",
+                "loyalty_strain_threshold"
+            ],
             "additionalProperties": false,
             "properties": {
                 "recruitment": {
                     "type": "object",
-                    "required": ["affection_threshold", "recruitment_scenario_id"],
+                    "required": [
+                        "affection_threshold",
+                        "recruitment_scenario_id"
+                    ],
                     "additionalProperties": false,
                     "properties": {
-                        "affection_threshold": {"type": "integer"},
-                        "recruitment_scenario_id": {"type": "string"},
-                        "recruitment_conditions": {"type": "array", "items": {"type": "string"}}
+                        "affection_threshold": {
+                            "type": "integer"
+                        },
+                        "recruitment_scenario_id": {
+                            "type": "string"
+                        },
+                        "recruitment_conditions": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
                     }
                 },
                 "combat_profile": {
                     "type": "object",
-                    "required": ["behavior_type", "abilities"],
+                    "required": [
+                        "behavior_type",
+                        "abilities"
+                    ],
                     "additionalProperties": false,
                     "properties": {
-                        "behavior_type": {"type": "string", "enum": ["aggressive", "supportive", "defensive"]},
-                        "abilities": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 3},
-                        "directive_vocabulary": {"type": "object", "additionalProperties": {"type": "string"}}
+                        "behavior_type": {
+                            "type": "string",
+                            "enum": [
+                                "aggressive",
+                                "supportive",
+                                "defensive"
+                            ]
+                        },
+                        "abilities": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "minItems": 2,
+                            "maxItems": 3
+                        },
+                        "directive_vocabulary": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 },
                 "ambient_behavior": {
                     "type": "object",
-                    "required": ["comment_frequency", "trigger_categories"],
+                    "required": [
+                        "comment_frequency",
+                        "trigger_categories"
+                    ],
                     "additionalProperties": false,
                     "properties": {
-                        "comment_frequency": {"type": "string"},
-                        "trigger_categories": {"type": "array", "items": {"type": "string"}},
-                        "mood_modifier": {"type": "number"}
+                        "comment_frequency": {
+                            "type": "string"
+                        },
+                        "trigger_categories": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "mood_modifier": {
+                            "type": "number"
+                        }
                     }
                 },
-                "loyalty_strain_threshold": {"type": "integer"},
-                "world_event_reactions": {"type": "array", "items": {"type": "object"}},
-                "farewell_template": {"type": "string"},
-                "reunion_template": {"type": "string"},
-                "dismissal_relationship_modifier": {"type": "integer"}
-            }
+                "loyalty_strain_threshold": {
+                    "type": "integer"
+                },
+                "world_event_reactions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "farewell_template": {
+                    "type": "string"
+                },
+                "reunion_template": {
+                    "type": "string"
+                },
+                "dismissal_relationship_modifier": {
+                    "type": "integer"
+                }
+            },
+            "x-group": "system"
         }
-    }
+    },
+    "x-groups": [
+        {
+            "id": "identity",
+            "title": "Identity",
+            "description": "Who this NPC is at a glance."
+        },
+        {
+            "id": "personality",
+            "title": "Personality and motives",
+            "description": "What drives them. Write facts that change how they act now; keep long backstory in the character bible."
+        },
+        {
+            "id": "voice",
+            "title": "Voice",
+            "description": "How they sound. The AI copies these examples more closely than it follows descriptions, so write them exactly as the NPC would speak, punctuation included."
+        },
+        {
+            "id": "knowledge",
+            "title": "Knowledge, relationships and secrets",
+            "description": "What they know, who they know, and what they hide."
+        },
+        {
+            "id": "animation",
+            "title": "Body language",
+            "description": "Animation IDs the 3D client can play. The relay rejects any animation not listed here."
+        },
+        {
+            "id": "world",
+            "title": "Where they are",
+            "description": "Placement in the world and daily routine."
+        },
+        {
+            "id": "mechanics",
+            "title": "Game stats",
+            "description": "Mechanical stats. Never shown to the AI.",
+            "collapsed": true
+        },
+        {
+            "id": "system",
+            "title": "Shop, companion and system fields",
+            "description": "Only needed for shopkeepers, companions, and generated NPCs.",
+            "collapsed": true
+        }
+    ]
 }

@@ -222,7 +222,7 @@ Only `inkglass_dark` has content so far.
 
 ## 6. Schema Definitions
 
-All schemas are fully defined in docs/schemas reference.pdf. Pydantic models in relay/schemas.py mirror /schemas/*.json exactly. Content files are validated against their schema when saved through the Admin Workshop (relay/admin/reload.py). Every content file is also validated on every push by relay/tests/test_content_files.py (CI step 1), which reuses the Workshop's content-type registry; run it locally before committing.
+All schemas are fully defined in docs/schemas reference.pdf. Pydantic models in relay/schemas.py mirror /schemas/*.json exactly. Schemas may also carry display-only annotations for the Workshop form: `description` (help text), and `x-groups` on the root with `x-group` on each property (section order, titles, and which sections start collapsed). Validation ignores them, and they never add fields. Content files are validated against their schema when saved through the Admin Workshop (relay/admin/reload.py). Every content file is also validated on every push by relay/tests/test_content_files.py (CI step 1), which reuses the Workshop's content-type registry; run it locally before committing.
 
 ## 7. Code Conventions
 

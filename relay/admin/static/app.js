@@ -257,7 +257,9 @@ wsNewBtn.addEventListener("click", () => {
 
   // Scaffold from schema defaults
   const scaffold = wsCurrentSchema ? scaffoldFromSchema(wsCurrentSchema, { id: fileId, world_id: w }) : { id: fileId };
-  renderEditor(scaffold);
+  const required = new Set([...(wsCurrentSchema?.required || []), "id", "world_id"]);
+  const baseline = Object.fromEntries(Object.entries(scaffold).filter(([k]) => required.has(k)));
+  renderEditor(scaffold, baseline);
   markClean();
 });
 
@@ -358,8 +360,15 @@ function showValidationErrors(errors) {
 // Schema-driven form rendering
 // ---------------------------------------------------------------------------
 
-function renderEditor(data) {
+// Form baseline: what the form was rendered from, and what it collected right
+// after rendering. Optional fields the file never had and nobody touched are
+// dropped on save, so placeholders for absent fields aren't written into files.
+let wsFormOriginal = null;
+let wsFormInitial = null;
+
+function renderEditor(data, original = data) {
   wsEditorArea.innerHTML = "";
+  wsFormOriginal = original;
   if (wsEditorMode === "json") {
     renderJsonEditor(data);
   } else {
@@ -390,6 +399,9 @@ function renderFormEditor(data) {
   form.id = "schema-form-root";
   buildFormFields(form, wsCurrentSchema, data, "");
   wsEditorArea.appendChild(form);
+  // Textareas can only measure their content once they are in the page.
+  form.querySelectorAll("textarea.autogrow").forEach(autoGrow);
+  wsFormInitial = collectObjectFromForm(form, wsCurrentSchema);
 }
 
 function collectFormData() {
@@ -398,7 +410,35 @@ function collectFormData() {
     if (ta) return JSON.parse(ta.value);
     return {};
   }
-  return collectObjectFromForm(document.getElementById("schema-form-root"), wsCurrentSchema);
+  const collected = collectObjectFromForm(document.getElementById("schema-form-root"), wsCurrentSchema);
+  return pruneUntouched(collected, wsFormInitial, wsFormOriginal, wsCurrentSchema);
+}
+
+// Drop optional fields that the source data didn't have and that are unchanged
+// since the form was rendered; also drop optional strings left empty.
+function pruneUntouched(value, initial, original, schema) {
+  if (!schema || value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    if (!schema.items) return value;
+    return value.map((v, i) => pruneUntouched(v, initial?.[i], original?.[i], schema.items));
+  }
+  if (!schema.properties) return value;
+  const required = new Set(schema.required || []);
+  const origObj = original && typeof original === "object" ? original : null;
+  for (const key of Object.keys(value)) {
+    const sub = schema.properties[key];
+    if (!sub) continue;
+    const origHas = !!origObj && key in origObj;
+    const optional = !required.has(key);
+    if (optional && value[key] === "") { delete value[key]; continue; }
+    if (optional && !origHas && sameJson(value[key], initial?.[key])) { delete value[key]; continue; }
+    value[key] = pruneUntouched(value[key], initial?.[key], origHas ? origObj[key] : undefined, sub);
+  }
+  return value;
+}
+
+function sameJson(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function scaffoldFromSchema(schema, overrides = {}) {
@@ -423,34 +463,136 @@ function buildFormFields(container, schema, data, pathPrefix) {
   const props = schema.properties || {};
   const required = new Set(schema.required || []);
 
+  // A schema may declare display groups ("x-groups" on the root, "x-group" on each
+  // property). Groups only change order and visibility: every field stays a direct
+  // child of the form, so collecting values back works exactly as without groups.
+  if (!pathPrefix && Array.isArray(schema["x-groups"])) {
+    const known = new Set(schema["x-groups"].map(g => g.id));
+    const groups = [...schema["x-groups"]];
+    if (Object.values(props).some(p => !known.has(p["x-group"]))) {
+      groups.push({ id: "_other", title: "Other fields", collapsed: true });
+    }
+    for (const g of groups) {
+      const keys = Object.keys(props).filter(k =>
+        g.id === "_other" ? !known.has(props[k]["x-group"]) : props[k]["x-group"] === g.id);
+      if (!keys.length) continue;
+      const header = makeGroupHeader(container, g);
+      for (const key of keys) {
+        const before = container.children.length;
+        buildProperty(container, key, props[key], data?.[key], key, required.has(key));
+        for (const el of [...container.children].slice(before)) {
+          el.dataset.uiGroup = g.id;
+          if (header.classList.contains("collapsed")) el.classList.add("group-hidden");
+        }
+      }
+    }
+    return;
+  }
+
   for (const [key, prop] of Object.entries(props)) {
     const fullPath = pathPrefix ? pathPrefix + "." + key : key;
-    const value = data?.[key];
-    const isReq = required.has(key);
-
-    if (prop.type === "object" && prop.properties) {
-      // Nested object -> section
-      const section = document.createElement("div");
-      section.className = "form-section";
-      section.innerHTML = `<div class="section-title">${formatLabel(key)}${isReq ? " *" : ""}</div>`;
-      buildFormFields(section, prop, value || {}, fullPath);
-      container.appendChild(section);
-    } else if (prop.type === "array") {
-      buildArrayField(container, key, prop, value || [], fullPath, isReq);
-    } else if (prop.type === "object" && !prop.properties) {
-      // Freeform object -> JSON textarea
-      const group = makeGroup(key, isReq, prop.description);
-      const ta = document.createElement("textarea");
-      ta.dataset.path = fullPath;
-      ta.dataset.jsonObj = "true";
-      ta.rows = 4;
-      ta.value = value ? JSON.stringify(value, null, 2) : "{}";
-      group.appendChild(ta);
-      container.appendChild(group);
-    } else {
-      buildScalarField(container, key, prop, value, fullPath, isReq);
-    }
+    buildProperty(container, key, prop, data?.[key], fullPath, required.has(key));
   }
+}
+
+function buildProperty(container, key, prop, value, fullPath, isReq) {
+  // Union types: "X or null" for a simple X edits as X, with blank meaning null;
+  // objects, unions of shapes (oneOf/anyOf) and anything else edit as raw JSON.
+  const types = Array.isArray(prop.type) ? prop.type : null;
+  const base = types ? types.filter(t => t !== "null") : null;
+  if (prop.oneOf || prop.anyOf || (base && (base.length !== 1 || base[0] === "object" || base[0] === "array"))) {
+    const group = makeGroup(key, isReq, prop.description);
+    const ta = document.createElement("textarea");
+    ta.dataset.path = fullPath;
+    ta.dataset.jsonObj = "true";
+    ta.rows = 3;
+    ta.value = JSON.stringify(value === undefined ? null : value, null, 2);
+    group.appendChild(ta);
+    container.appendChild(group);
+    return;
+  }
+  if (base) {
+    const before = container.children.length;
+    buildScalarField(container, key, { ...prop, type: base[0] }, value, fullPath, isReq);
+    [...container.children].slice(before).forEach(g =>
+      g.querySelectorAll("input, textarea, select").forEach(el => { el.dataset.nullable = "true"; }));
+    return;
+  }
+  if (prop.type === "object" && prop.properties) {
+    // Nested object -> section
+    const section = document.createElement("div");
+    section.className = "form-section";
+    section.innerHTML = `<div class="section-title">${formatLabel(key)}${isReq ? " *" : ""}</div>`;
+    if (prop.description) {
+      const hint = document.createElement("div");
+      hint.className = "hint section-hint";
+      hint.textContent = prop.description;
+      section.appendChild(hint);
+    }
+    buildFormFields(section, prop, value || {}, fullPath);
+    container.appendChild(section);
+  } else if (prop.type === "array") {
+    buildArrayField(container, key, prop, value || [], fullPath, isReq);
+  } else if (prop.type === "object" && !prop.properties) {
+    // Freeform object -> JSON textarea
+    const group = makeGroup(key, isReq, prop.description);
+    const ta = document.createElement("textarea");
+    ta.dataset.path = fullPath;
+    ta.dataset.jsonObj = "true";
+    ta.rows = 4;
+    ta.value = value ? JSON.stringify(value, null, 2) : "{}";
+    group.appendChild(ta);
+    container.appendChild(group);
+  } else {
+    buildScalarField(container, key, prop, value, fullPath, isReq);
+  }
+}
+
+// Clickable heading for a display group; collapsing hides the group's fields.
+function makeGroupHeader(container, g) {
+  const header = document.createElement("div");
+  header.className = "form-group-header" + (g.collapsed ? " collapsed" : "");
+  const title = document.createElement("button");
+  title.type = "button";
+  title.className = "group-toggle";
+  title.textContent = g.title || formatLabel(g.id);
+  header.appendChild(title);
+  if (g.description) {
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    hint.textContent = g.description;
+    header.appendChild(hint);
+  }
+  title.addEventListener("click", () => {
+    const collapsed = header.classList.toggle("collapsed");
+    container.querySelectorAll(`:scope > [data-ui-group="${g.id}"]`).forEach(el => {
+      el.classList.toggle("group-hidden", collapsed);
+      if (!collapsed) el.querySelectorAll("textarea.autogrow").forEach(autoGrow);
+    });
+  });
+  container.appendChild(header);
+  return header;
+}
+
+// Free text gets a textarea that grows with its content; IDs and patterned
+// values stay single-line inputs.
+function isFreeText(key, prop) {
+  return !prop.pattern && !prop.format && key !== "id" && !key.endsWith("_id");
+}
+
+function makeAutoGrowTextarea(path, value) {
+  const ta = document.createElement("textarea");
+  ta.className = "autogrow";
+  ta.rows = 1;
+  ta.dataset.path = path;
+  ta.value = value ?? "";
+  ta.addEventListener("input", () => autoGrow(ta));
+  return ta;
+}
+
+function autoGrow(ta) {
+  ta.style.height = "auto";
+  ta.style.height = ta.scrollHeight + 2 + "px";
 }
 
 function buildScalarField(container, key, prop, value, path, isReq) {
@@ -475,7 +617,7 @@ function buildScalarField(container, key, prop, value, path, isReq) {
       const opt = document.createElement("option");
       opt.value = v;
       opt.textContent = v;
-      if (String(value) === v) opt.selected = true;
+      if (String(value ?? prop.default ?? false) === v) opt.selected = true;
       sel.appendChild(opt);
     });
     group.appendChild(sel);
@@ -490,12 +632,8 @@ function buildScalarField(container, key, prop, value, path, isReq) {
     group.appendChild(inp);
   } else {
     // string
-    if (prop.maxLength && prop.maxLength > 200) {
-      const ta = document.createElement("textarea");
-      ta.dataset.path = path;
-      ta.rows = 3;
-      ta.value = value ?? "";
-      group.appendChild(ta);
+    if (isFreeText(key, prop)) {
+      group.appendChild(makeAutoGrowTextarea(path, value));
     } else {
       const inp = document.createElement("input");
       inp.type = "text";
@@ -551,11 +689,15 @@ function addArrayItem(listEl, itemSchema, value, path, index) {
   wrapper.appendChild(removeBtn);
 
   if (!itemSchema || itemSchema.type === "string") {
-    const inp = document.createElement("input");
-    inp.type = "text";
-    inp.dataset.path = path;
-    inp.value = value ?? "";
-    wrapper.appendChild(inp);
+    if (itemSchema && !itemSchema.pattern && !itemSchema.enum) {
+      wrapper.appendChild(makeAutoGrowTextarea(path, value));
+    } else {
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.dataset.path = path;
+      inp.value = value ?? "";
+      wrapper.appendChild(inp);
+    }
   } else if (itemSchema.type === "object" && itemSchema.properties) {
     buildFormFields(wrapper, itemSchema, value || {}, path);
   } else {
@@ -568,6 +710,7 @@ function addArrayItem(listEl, itemSchema, value, path, index) {
   }
 
   listEl.appendChild(wrapper);
+  if (wrapper.isConnected) wrapper.querySelectorAll("textarea.autogrow").forEach(autoGrow);
 }
 
 // Collect data back from form
@@ -653,13 +796,18 @@ function findFieldByKey(container, key) {
 }
 
 function readFieldValue(el, prop) {
+  if (el.dataset.nullable && el.value === "") return null;
   if (el.dataset.boolField) return el.value === "true";
+  const numType = Array.isArray(prop.type) ? prop.type.find(t => t !== "null") : prop.type;
+  if (el.tagName === "SELECT" && (numType === "integer" || numType === "number")) {
+    return prop.type === "integer" ? parseInt(el.value, 10) : parseFloat(el.value);
+  }
   if (el.dataset.numField) {
     const v = el.value;
-    return v === "" ? 0 : (prop.type === "integer" ? parseInt(v, 10) : parseFloat(v));
+    return v === "" ? 0 : (numType === "integer" ? parseInt(v, 10) : parseFloat(v));
   }
   if (el.dataset.jsonObj) {
-    try { return JSON.parse(el.value); } catch { return {}; }
+    try { return JSON.parse(el.value); } catch { return el.value; }
   }
   return el.value;
 }
