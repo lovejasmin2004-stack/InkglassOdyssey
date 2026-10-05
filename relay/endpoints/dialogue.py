@@ -412,9 +412,12 @@ async def dialogue_ws(ws: WebSocket) -> None:
                 else:
                     await _send_error(ws, "unknown_type", f"Unrecognised message type: {msg_type}")
             finally:
-                # (#R8) Only release in_flight if no pending check proposals
-                if not pending_check_proposals:
-                    in_flight = False
+                # A turn paused for solo check confirmation stays blocked through
+                # pending_check_proposals (checked above), which check_confirm clears.
+                # in_flight must always be released here: check_confirm finishes the
+                # turn elsewhere and cannot reset it, so holding it would reject every
+                # later turn on this connection.
+                in_flight = False
 
     except WebSocketDisconnect:
         logger.info("WS disconnected", extra={"player_id": player_id})

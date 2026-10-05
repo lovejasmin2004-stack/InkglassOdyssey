@@ -1235,6 +1235,51 @@ class TestInFlightGuard:
                 assert msg["type"] == "error"
                 assert msg["code"] == "turn_in_progress"
 
+    @patch("relay.endpoints.dialogue._RATE_LIMIT_SECONDS", 0)
+    @patch("relay.endpoints.dialogue.mark_stale_turns", return_value=0)
+    @patch("relay.endpoints.dialogue.get_pending_turns", return_value=[])
+    @patch("relay.endpoints.dialogue.load_npc")
+    @patch("relay.endpoints.dialogue._get_client")
+    def test_next_turn_accepted_after_confirmed_check(
+        self,
+        mock_get_client,
+        mock_load_npc,
+        _mock_pending,
+        _mock_stale,
+    ):
+        """Regression: a confirmed solo check used to leave the connection stuck in turn_in_progress."""
+        mock_load_npc.return_value = _make_npc()
+        with_check = _mock_analysis_response(
+            checks=[{"skill": "insight", "dc": 12, "reason": "Reading her face"}],
+        )
+        mock_client = MagicMock()
+        mock_client.messages.create = AsyncMock(side_effect=[with_check, _mock_analysis_response()])
+        mock_client.messages.stream = MagicMock(
+            side_effect=[_mock_stream_context("She narrows her eyes."), _mock_stream_context("She sighs.")],
+        )
+        mock_get_client.return_value = mock_client
+        turn = {
+            "type": "rp_turn",
+            "npc_id": "test_npc",
+            "text": "Are you lying to me?",
+            "character": {},
+        }
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            with client.websocket_connect("/dialogue") as ws:
+                ws.send_text(_auth_msg(_session_token(mode="solo")))
+
+                ws.send_text(json.dumps(turn))
+                proposal_msgs = _recv_all(ws, until_type="check_proposal")
+                turn_id = next(m for m in proposal_msgs if m["type"] == "stream_start")["turn_id"]
+                ws.send_text(json.dumps({"type": "check_confirm", "turn_id": turn_id}))
+                _recv_all(ws, until_type="stream_end")
+
+                ws.send_text(json.dumps({**turn, "text": "Fine. Tell me about the carriage."}))
+                msg = json.loads(ws.receive_text())
+
+        assert msg["type"] == "stream_start", msg
+
 
 # ---------------------------------------------------------------------------
 # Analysis tool schema test (#R7)
