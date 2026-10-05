@@ -15,17 +15,31 @@ from relay.logging_config import JSONFormatter, _redact, setup_logging
 # ===========================================================================
 
 
+_SETTINGS_ENV_VARS = (
+    "ANTHROPIC_API_KEY",
+    "INKGLASS_JWT_SECRET",
+    "ADMIN_SECRET",
+    "DATABASE_URL",
+    "ADMIN_MODE",
+    "ENVIRONMENT",
+    "LOG_LEVEL",
+)
+
+
+def _settings(**kwargs) -> Settings:
+    """Build Settings from explicit values only: no .env file, no shell env (see fixture)."""
+    return Settings(_env_file=None, **kwargs)
+
+
 class TestSettings:
-    def test_defaults(self, monkeypatch):
-        # Isolate from .env so ADMIN_MODE etc. don't leak into the test.
-        monkeypatch.delenv("ADMIN_MODE", raising=False)
-        monkeypatch.delenv("ENVIRONMENT", raising=False)
-        monkeypatch.delenv("LOG_LEVEL", raising=False)
-        s = Settings(
-            ANTHROPIC_API_KEY="key",
-            INKGLASS_JWT_SECRET="secret",
-            _env_file=None,
-        )
+    @pytest.fixture(autouse=True)
+    def _isolate_env(self, monkeypatch):
+        """Keep the developer's shell and CI variables out of these tests."""
+        for name in _SETTINGS_ENV_VARS:
+            monkeypatch.delenv(name, raising=False)
+
+    def test_defaults(self):
+        s = _settings(ANTHROPIC_API_KEY="key", INKGLASS_JWT_SECRET="secret")
         assert s.anthropic_api_key == "key"
         assert s.jwt_secret == "secret"
         assert s.database_url == "sqlite+aiosqlite:///./inkglass.db"
@@ -34,32 +48,47 @@ class TestSettings:
         assert s.log_level == "INFO"
 
     def test_admin_mode_bool_coercion(self):
-        s = Settings(ANTHROPIC_API_KEY="k", INKGLASS_JWT_SECRET="s", ADMIN_MODE="true", _env_file=None)
+        s = _settings(ANTHROPIC_API_KEY="k", INKGLASS_JWT_SECRET="s", ADMIN_MODE="true")
         assert s.admin_mode is True
 
     def test_invalid_log_level_rejected(self):
         with pytest.raises(ValueError):
-            Settings(ANTHROPIC_API_KEY="k", INKGLASS_JWT_SECRET="s", LOG_LEVEL="YOLO", _env_file=None)
+            _settings(ANTHROPIC_API_KEY="k", INKGLASS_JWT_SECRET="s", LOG_LEVEL="YOLO")
 
     def test_invalid_environment_rejected(self):
         with pytest.raises(ValueError):
-            Settings(ANTHROPIC_API_KEY="k", INKGLASS_JWT_SECRET="s", ENVIRONMENT="mars", _env_file=None)
+            _settings(ANTHROPIC_API_KEY="k", INKGLASS_JWT_SECRET="s", ENVIRONMENT="mars")
 
-    def test_production_requires_secrets(self):
-        with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
-            Settings(ANTHROPIC_API_KEY="", INKGLASS_JWT_SECRET="", ENVIRONMENT="production")
+    def test_production_requires_jwt_secret(self):
+        with pytest.raises(ValueError, match="INKGLASS_JWT_SECRET must be set"):
+            _settings(ANTHROPIC_API_KEY="k", ADMIN_SECRET="a", INKGLASS_JWT_SECRET="", ENVIRONMENT="production")
+
+    def test_production_requires_api_key_and_admin_secret(self):
+        # JWT secret set, so only the production-only secrets can fail.
+        with pytest.raises(ValueError, match="Required environment variables not set: ANTHROPIC_API_KEY, ADMIN_SECRET"):
+            _settings(ANTHROPIC_API_KEY="", INKGLASS_JWT_SECRET="s", ENVIRONMENT="production")
 
     def test_development_allows_empty_secrets(self):
-        s = Settings(ANTHROPIC_API_KEY="", INKGLASS_JWT_SECRET="", ENVIRONMENT="development")
+        s = _settings(ANTHROPIC_API_KEY="", INKGLASS_JWT_SECRET="", ENVIRONMENT="development")
         assert s.anthropic_api_key == ""
+        # Empty JWT secret is replaced with a fixed dev-only key, never "".
+        assert s.jwt_secret
 
     def test_custom_database_url(self):
-        s = Settings(
+        s = _settings(
             ANTHROPIC_API_KEY="k",
             INKGLASS_JWT_SECRET="s",
             DATABASE_URL="postgresql+asyncpg://localhost/test",
         )
         assert s.database_url == "postgresql+asyncpg://localhost/test"
+
+    def test_dotenv_file_is_ignored(self, tmp_path, monkeypatch):
+        """A developer's .env must not change what these tests see."""
+        (tmp_path / ".env").write_text("ENVIRONMENT=production\nDATABASE_URL=sqlite:///elsewhere.db\n")
+        monkeypatch.chdir(tmp_path)
+        s = _settings(ANTHROPIC_API_KEY="k", INKGLASS_JWT_SECRET="s")
+        assert s.environment == "development"
+        assert s.database_url == "sqlite+aiosqlite:///./inkglass.db"
 
 
 # ===========================================================================

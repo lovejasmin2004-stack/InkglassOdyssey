@@ -42,6 +42,7 @@ from relay.admin.reload import (
     SAFE_ID_RE,
     WORLD_IDS,
     delete_content,
+    is_excluded,
     list_content,
     list_schemas,
     list_worlds,
@@ -211,6 +212,11 @@ def _validate_ids(content_type: str, world_id: str, file_id: str | None = None) 
         raise HTTPException(400, f"Unknown world: {world_id}")
     if file_id is not None and not SAFE_ID_RE.match(file_id):
         raise HTTPException(400, f"Invalid file_id: {file_id}")
+    # Excluded files (e.g. world_config, blueprints) share a directory with this
+    # content type but are not records of it; reading, writing or deleting them
+    # through this route would validate or overwrite them with the wrong schema.
+    if file_id is not None and is_excluded(content_type, file_id):
+        raise HTTPException(404, f"{content_type}/{world_id}/{file_id} is not editable as {content_type}")
 
 
 # ---------------------------------------------------------------------------

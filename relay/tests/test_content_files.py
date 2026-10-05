@@ -102,3 +102,20 @@ def test_content_world_directories_are_known_worlds() -> None:
         if world_dir.is_dir() and world_dir.name not in WORLD_IDS
     )
     assert not unknown, f"Unknown world directories: {unknown}"
+
+
+def test_schema_display_groups_cover_every_field() -> None:
+    """Workshop display groups (x-groups / x-group) must name real groups.
+
+    A field without a known group still renders, under a collapsed "Other fields"
+    heading, so a new property added without a group would be easy to miss.
+    """
+    for schema_path in sorted(_SCHEMAS.glob("*.json")):
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        groups = schema.get("x-groups")
+        if groups is None:
+            continue
+        ids = [g["id"] for g in groups]
+        assert len(ids) == len(set(ids)), f"{schema_path.name}: duplicate group ids"
+        ungrouped = [k for k, p in schema["properties"].items() if p.get("x-group") not in ids]
+        assert not ungrouped, f"{schema_path.name}: fields without a display group: {ungrouped}"
