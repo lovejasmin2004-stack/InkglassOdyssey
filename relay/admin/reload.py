@@ -44,7 +44,9 @@ CONTENT_TYPES: dict[str, dict[str, Any]] = {
     "crafting": {"dir": "crafting", "schema": "recipe.json"},
     "quests": {"dir": "quests", "schema": "quest.json"},
     "factions": {"dir": "factions", "schema": "faction.json"},
-    "scenarios": {"dir": "scenarios", "schema": "scenario.json"},
+    # blueprints.json is an array of event-arc blueprints (event_arc_blueprint.json),
+    # not a scenario; it has no Workshop form yet, so it is not editable here.
+    "scenarios": {"dir": "scenarios", "schema": "scenario.json", "exclude": {"blueprints"}},
     "fauna": {"dir": "fauna", "schema": "fauna.json"},
     "lore": {"dir": "lore", "schema": "lore.json"},
     "regions": {"dir": "regions", "schema": "region.json", "exclude": {"world_config"}},
@@ -78,8 +80,15 @@ def _content_dir(content_type: str, world_id: str) -> Path:
     return directory
 
 
+def is_excluded(content_type: str, file_id: str) -> bool:
+    """True for files in a content directory that are not records of that type."""
+    return file_id in CONTENT_TYPES[content_type].get("exclude", set())
+
+
 def _content_path(content_type: str, world_id: str, file_id: str) -> Path:
-    """Return the full path to a content file, with traversal check."""
+    """Return the full path to a content file, with traversal and exclusion checks."""
+    if is_excluded(content_type, file_id):
+        raise ValueError(f"{file_id} is not a {content_type} record")
     directory = _content_dir(content_type, world_id)
     path = (directory / f"{file_id}.json").resolve()
     if not path.is_relative_to(directory):
@@ -146,11 +155,9 @@ def _build_index_sync(content_type: str, world_id: str) -> list[dict[str, Any]]:
     if not directory.is_dir():
         return []
 
-    exclude_ids: set[str] = CONTENT_TYPES[content_type].get("exclude", set())
-
     results: list[dict[str, Any]] = []
     for path in sorted(directory.glob("*.json")):
-        if path.stem in exclude_ids:
+        if is_excluded(content_type, path.stem):
             continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
