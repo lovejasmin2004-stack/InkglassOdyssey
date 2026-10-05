@@ -31,7 +31,7 @@ from relay.schemas import (
 def _make_blueprint(**overrides) -> EventArcBlueprint:
     base = {
         "id": "test_arc",
-        "world_id": "inkglass_dark",
+        "world_id": "wha_au",
         "name": "Test Arc",
         "description": "A test event arc.",
         "region_id": "test_region",
@@ -113,7 +113,7 @@ class TestCustomArcRequest:
     def test_valid_request(self):
         req = CustomArcRequest(
             blueprint_id="guild_trials",
-            world_id="inkglass_dark",
+            world_id="wha_au",
             phase_choices=["combat_1", "surprise_me", "social_1"],
         )
         assert req.blueprint_id == "guild_trials"
@@ -123,7 +123,7 @@ class TestCustomArcRequest:
         with pytest.raises(ValidationError):
             CustomArcRequest(
                 blueprint_id="guild_trials",
-                world_id="inkglass_dark",
+                world_id="wha_au",
                 phase_choices=[],
             )
 
@@ -131,14 +131,14 @@ class TestCustomArcRequest:
         with pytest.raises(ValidationError):
             CustomArcRequest(
                 blueprint_id="guild_trials",
-                world_id="inkglass_dark",
+                world_id="wha_au",
                 phase_choices=["a"] * 11,
             )
 
     def test_featured_npcs_default_empty(self):
         req = CustomArcRequest(
             blueprint_id="guild_trials",
-            world_id="inkglass_dark",
+            world_id="wha_au",
             phase_choices=["surprise_me", "surprise_me", "surprise_me"],
         )
         assert req.featured_npc_ids == []
@@ -146,7 +146,7 @@ class TestCustomArcRequest:
     def test_region_override(self):
         req = CustomArcRequest(
             blueprint_id="guild_trials",
-            world_id="inkglass_dark",
+            world_id="wha_au",
             phase_choices=["surprise_me"] * 3,
             region_id="custom_region",
         )
@@ -500,7 +500,7 @@ class TestCustomArcIntegration:
         from relay.generation.blueprint_loader import clear_cache, get_blueprint
 
         clear_cache()
-        bp = await get_blueprint("inkglass_dark", "guild_trials")
+        bp = await get_blueprint("wha_au", "guild_trials")
         assert bp is not None
 
         inst = assemble_custom_arc(

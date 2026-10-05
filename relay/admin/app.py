@@ -467,8 +467,16 @@ async def api_cleanup_test_sessions() -> dict:
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    index_path = _STATIC_DIR / "index.html"
-    return HTMLResponse(index_path.read_text(encoding="utf-8"))
+    """Serve the admin page with versioned asset links.
+
+    Each asset URL carries the file's modification time, so after a `git pull`
+    the browser fetches the new script and stylesheet instead of a cached copy.
+    """
+    html = (_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    for asset in ("app.js", "style.css"):
+        version = int((_STATIC_DIR / asset).stat().st_mtime)
+        html = html.replace(f'/static/{asset}"', f'/static/{asset}?v={version}"')
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
 
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")

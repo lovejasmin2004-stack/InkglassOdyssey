@@ -171,12 +171,12 @@ class TestSceneLifecycle:
 
         resp = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            json={"session_id": session_id, "npc_id": "seta", "mode": "rp"},
             headers=auth_header,
         )
         assert resp.status_code == 201
         data = resp.json()
-        assert data["npc_id"] == "seta_inkglass_dark"
+        assert data["npc_id"] == "seta"
         assert data["mode"] == "rp"
         assert data["status"] == "active"
         assert data["turn_count"] == 0
@@ -220,7 +220,7 @@ class TestSceneLifecycle:
 
         create = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark"},
+            json={"session_id": session_id, "npc_id": "seta"},
             headers=auth_header,
         )
         scene_id = create.json()["id"]
@@ -238,7 +238,7 @@ class TestSceneLifecycle:
 
         create = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark"},
+            json={"session_id": session_id, "npc_id": "seta"},
             headers=auth_header,
         )
         scene_id = create.json()["id"]
@@ -255,7 +255,7 @@ class TestSceneLifecycle:
 
         create = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark"},
+            json={"session_id": session_id, "npc_id": "seta"},
             headers=auth_header,
         )
         scene_id = create.json()["id"]
@@ -300,7 +300,7 @@ class TestSessionEnd:
         # Start and end a scene
         scene = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            json={"session_id": session_id, "npc_id": "seta", "mode": "rp"},
             headers=auth_header,
         )
         scene_id = scene.json()["id"]
@@ -318,7 +318,7 @@ class TestSessionEnd:
         data = resp.json()
         assert data["analytics"]["scene_count"] == 2
         assert data["scenes_ended"] == 1  # only the still-active one
-        assert "seta_inkglass_dark" in data["session_summary"]
+        assert "seta" in data["session_summary"]
 
     def test_end_session_with_level_increment(self, db_client, auth_header, character_id):
         start = db_client.post(
@@ -331,7 +331,7 @@ class TestSessionEnd:
         # Create a scene and manually add turns to meet the minimum threshold (5)
         scene_resp = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            json={"session_id": session_id, "npc_id": "seta", "mode": "rp"},
             headers=auth_header,
         )
         scene_id = scene_resp.json()["id"]
@@ -421,7 +421,7 @@ class TestSessionStateWithScenes:
 
         db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            json={"session_id": session_id, "npc_id": "seta", "mode": "rp"},
             headers=auth_header,
         )
 
@@ -429,7 +429,7 @@ class TestSessionStateWithScenes:
         assert state.status_code == 200
         data = state.json()
         assert len(data["scenes"]) == 1
-        assert data["scenes"][0]["npc_id"] == "seta_inkglass_dark"
+        assert data["scenes"][0]["npc_id"] == "seta"
 
 
 # ---------------------------------------------------------------------------
@@ -546,7 +546,7 @@ class TestSceneMaxLimit:
         for i in range(20):
             resp = db_client.post(
                 "/scene",
-                json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+                json={"session_id": session_id, "npc_id": "seta", "mode": "rp"},
                 headers=auth_header,
             )
             assert resp.status_code == 201, f"Scene {i + 1} creation failed"
@@ -554,7 +554,7 @@ class TestSceneMaxLimit:
         # 21st should fail
         resp = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            json={"session_id": session_id, "npc_id": "seta", "mode": "rp"},
             headers=auth_header,
         )
         assert resp.status_code == 409
@@ -573,7 +573,7 @@ class TestSceneMaxLimit:
         for _ in range(20):
             create = db_client.post(
                 "/scene",
-                json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+                json={"session_id": session_id, "npc_id": "seta", "mode": "rp"},
                 headers=auth_header,
             )
             scene_id = create.json()["id"]
@@ -582,7 +582,7 @@ class TestSceneMaxLimit:
         # Can still create a new scene because all 20 are ended
         resp = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            json={"session_id": session_id, "npc_id": "seta", "mode": "rp"},
             headers=auth_header,
         )
         assert resp.status_code == 201
@@ -611,7 +611,7 @@ class TestLevelUpValidation:
         # Create a scene with only 3 turns (below the 5 minimum)
         scene_resp = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            json={"session_id": session_id, "npc_id": "seta", "mode": "rp"},
             headers=auth_header,
         )
         scene_id = scene_resp.json()["id"]
@@ -642,7 +642,7 @@ class TestLevelUpValidation:
         # Only 2 turns — below threshold
         scene_resp = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            json={"session_id": session_id, "npc_id": "seta", "mode": "rp"},
             headers=auth_header,
         )
         scene_id = scene_resp.json()["id"]
@@ -693,7 +693,7 @@ class TestLevelUpValidation:
         # Create a scene with enough turns
         scene_resp = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            json={"session_id": session_id, "npc_id": "seta", "mode": "rp"},
             headers=auth_header,
         )
         scene_id = scene_resp.json()["id"]
@@ -724,7 +724,7 @@ class TestLevelUpValidation:
 
         scene_resp = db_client.post(
             "/scene",
-            json={"session_id": session_id, "npc_id": "seta_inkglass_dark", "mode": "rp"},
+            json={"session_id": session_id, "npc_id": "seta", "mode": "rp"},
             headers=auth_header,
         )
         scene_id = scene_resp.json()["id"]

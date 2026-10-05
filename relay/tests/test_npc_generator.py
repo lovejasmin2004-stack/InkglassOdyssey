@@ -30,7 +30,7 @@ from relay.schemas import NpcPersonality
 def _make_template(**overrides) -> NpcTemplate:
     base = {
         "id": "merchant",
-        "world_id": "inkglass_dark",
+        "world_id": "wha_au",
         "role_display": "Merchant",
         "entity_class": "humanoid",
         "level_range": [2, 6],
@@ -251,11 +251,11 @@ class TestTemplateModel:
 
 class TestTemplateLoading:
     @pytest.mark.asyncio
-    async def test_load_inkglass_dark_templates(self):
+    async def test_load_wha_au_templates(self):
         from relay.generation.template_loader import clear_cache, load_templates
 
         clear_cache()
-        templates = await load_templates("inkglass_dark")
+        templates = await load_templates("wha_au")
         assert len(templates) >= 3  # merchant, guard, traveler
         assert "merchant" in templates
         assert "guard" in templates
@@ -274,7 +274,7 @@ class TestTemplateLoading:
         from relay.generation.template_loader import clear_cache, get_template
 
         clear_cache()
-        tmpl = await get_template("inkglass_dark", "merchant")
+        tmpl = await get_template("wha_au", "merchant")
         assert tmpl is not None
         assert tmpl.id == "merchant"
         assert tmpl.role_display == "Merchant"
@@ -284,7 +284,7 @@ class TestTemplateLoading:
         from relay.generation.template_loader import clear_cache, get_template
 
         clear_cache()
-        tmpl = await get_template("inkglass_dark", "dragon_rider")
+        tmpl = await get_template("wha_au", "dragon_rider")
         assert tmpl is None
 
 
@@ -302,7 +302,7 @@ class TestGenerateNpc:
     def test_npc_has_correct_world_id(self):
         template = _make_template()
         npc = generate_npc(template, "merchant_quarter", rng=random.Random(42))
-        assert npc.world_id == "inkglass_dark"
+        assert npc.world_id == "wha_au"
 
     def test_npc_marked_as_generated(self):
         template = _make_template()

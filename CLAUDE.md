@@ -218,7 +218,7 @@ inkglass/
 └── unity/                          (planned) Unity project root, Phase 1
 ```
 
-Only `inkglass_dark` has content so far.
+Only `wha_au` has content so far. It was moved from `inkglass_dark` in October 2026 (everything moved, because the witch, guild and Thornveil content all reference each other), so `inkglass_dark` is empty and ready to be rebuilt as an original world. The `wha_au` files still use the series' canon terms (Knights Moralis, Tower of Tomes, brimmed and pointed hats, the Great Hall); this is a known, temporary breach of invariant #5 until the owner picks AU names. `wha_au` is Tier 2: Tier 1 accounts can't create characters there.
 
 ## 6. Schema Definitions
 

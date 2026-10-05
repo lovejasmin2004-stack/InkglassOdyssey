@@ -19,7 +19,7 @@ from relay.admin.app import app
 from relay.config import settings
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_WORLD = "inkglass_dark"
+_WORLD = "wha_au"
 
 
 @pytest.fixture()
@@ -73,3 +73,12 @@ def test_blueprints_file_is_an_array():
     """Guards the reason for the exclusion: if this changes, revisit CONTENT_TYPES."""
     data = json.loads((_REPO_ROOT / "scenarios" / _WORLD / "blueprints.json").read_text(encoding="utf-8"))
     assert isinstance(data, list)
+
+
+def test_index_versions_assets_so_browsers_reload_them(client):
+    """After an update the page must point at new asset URLs, or browsers keep the old script."""
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "no-cache"
+    assert "/static/app.js?v=" in resp.text
+    assert "/static/style.css?v=" in resp.text

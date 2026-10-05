@@ -103,7 +103,7 @@ def make_stub_npc():
     )
 
     return NpcPersonality(
-        id="seta_inkglass_dark",
+        id="seta",
         world_id="inkglass_dark",
         name="Seta",
         entity_class="humanoid",

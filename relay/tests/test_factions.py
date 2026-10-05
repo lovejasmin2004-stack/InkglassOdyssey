@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from relay.auth.tokens import create_account_token
+from relay.auth.tokens import create_account_token, create_session_token
 from relay.economy.pricing import (
     compute_buy_price,
     compute_sell_price,
@@ -24,6 +24,22 @@ from relay.factions.reputation import (
     resolve_tier,
 )
 from relay.schemas import Faction
+
+
+@pytest.fixture()
+def auth_header():
+    """This file's content lives in wha_au, a Tier 2 world, so the account needs Tier 2."""
+    return {"Authorization": f"Bearer {create_account_token(player_id='player_001', tier=2)}"}
+
+
+@pytest.fixture()
+def session_header():
+    """Faction data is loaded for the session's world, so the session is in wha_au."""
+    token = create_session_token(
+        player_id="player_001", world_id="wha_au", session_id="sess_001", tier=2, role="player", mode="solo"
+    )
+    return {"Authorization": f"Bearer {token}"}
+
 
 # ---------------------------------------------------------------------------
 # Sample faction registry for propagation tests
@@ -417,7 +433,7 @@ def character_id(db_client, auth_header):
     resp = db_client.post(
         "/character",
         json={
-            "world_id": "inkglass_dark",
+            "world_id": "wha_au",
             "name": "Faction Tester",
             "specialisation_path_id": "scout",
             "ability_scores": {

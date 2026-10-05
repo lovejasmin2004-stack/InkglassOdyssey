@@ -19,7 +19,7 @@ from relay.auth.tokens import create_account_token
 
 
 async def main() -> None:
-    token = create_account_token(player_id="player_001", tier=1)
+    token = create_account_token(player_id="player_001", tier=2)
     port = sys.argv[1] if len(sys.argv) > 1 else "8000"
     uri = f"ws://127.0.0.1:{port}/dialogue"
 
@@ -31,7 +31,7 @@ async def main() -> None:
         # --- send a quick-chat turn ---
         turn = {
             "type": "quickchat_turn",
-            "npc_id": "seta_inkglass_dark",
+            "npc_id": "seta",
             "text": "I heard you're a healer. How much to look at a wound on my arm?",
         }
         await ws.send(json.dumps(turn))

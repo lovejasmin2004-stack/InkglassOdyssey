@@ -48,7 +48,7 @@ def _make_phase(phase_id: str, category: str = "combat", **overrides) -> PhaseTe
 def _make_blueprint(**overrides) -> EventArcBlueprint:
     base = {
         "id": "test_arc",
-        "world_id": "inkglass_dark",
+        "world_id": "wha_au",
         "name": "Test Arc",
         "description": "A test event arc.",
         "region_id": "test_region",
@@ -200,7 +200,7 @@ class TestEventArcInstance:
         inst = EventArcInstance(
             id="test_inst",
             blueprint_id="test_arc",
-            world_id="inkglass_dark",
+            world_id="wha_au",
             character_id="player_1",
             origin="authored",
             status="active",
@@ -478,7 +478,7 @@ class TestInstantiateArc:
     def test_instance_has_correct_world_id(self):
         bp = _make_blueprint()
         inst = instantiate_arc(bp, "player_1", rng=random.Random(42))
-        assert inst.world_id == "inkglass_dark"
+        assert inst.world_id == "wha_au"
 
     def test_instance_has_correct_character_id(self):
         bp = _make_blueprint()
@@ -572,11 +572,11 @@ class TestInstantiateArc:
 
 class TestBlueprintLoading:
     @pytest.mark.asyncio
-    async def test_load_inkglass_dark_blueprints(self):
+    async def test_load_wha_au_blueprints(self):
         from relay.generation.blueprint_loader import clear_cache, load_blueprints
 
         clear_cache()
-        blueprints = await load_blueprints("inkglass_dark")
+        blueprints = await load_blueprints("wha_au")
         assert len(blueprints) >= 1
         assert "guild_trials" in blueprints
 
@@ -593,7 +593,7 @@ class TestBlueprintLoading:
         from relay.generation.blueprint_loader import clear_cache, get_blueprint
 
         clear_cache()
-        bp = await get_blueprint("inkglass_dark", "guild_trials")
+        bp = await get_blueprint("wha_au", "guild_trials")
         assert bp is not None
         assert bp.id == "guild_trials"
         assert bp.name == "The Guild Trials"
@@ -603,7 +603,7 @@ class TestBlueprintLoading:
         from relay.generation.blueprint_loader import clear_cache, get_blueprint
 
         clear_cache()
-        bp = await get_blueprint("inkglass_dark", "nonexistent_arc")
+        bp = await get_blueprint("wha_au", "nonexistent_arc")
         assert bp is None
 
 
@@ -618,13 +618,13 @@ class TestBlueprintToInstance:
         from relay.generation.blueprint_loader import clear_cache, get_blueprint
 
         clear_cache()
-        bp = await get_blueprint("inkglass_dark", "guild_trials")
+        bp = await get_blueprint("wha_au", "guild_trials")
         assert bp is not None
 
         inst = instantiate_arc(bp, "test_player", rng=random.Random(42))
         assert isinstance(inst, EventArcInstance)
         assert inst.blueprint_id == "guild_trials"
-        assert inst.world_id == "inkglass_dark"
+        assert inst.world_id == "wha_au"
         assert 3 <= len(inst.phases) <= 5
         # Must include combat (selection rule)
         phase_ids = {p.phase_id for p in inst.phases}
