@@ -62,6 +62,11 @@
             "x-group": "identity",
             "description": "Their role as people would describe it, for example 'Apprentice Healer'. Sent to the AI every turn."
         },
+        "appearance": {
+            "type": "string",
+            "description": "How they look: build, face, hair, clothes, what they carry, and anything a sharp observer might notice. Sent to the AI every turn.",
+            "x-group": "identity"
+        },
         "level": {
             "type": "integer",
             "minimum": 1,
@@ -120,10 +125,18 @@
             "x-group": "voice",
             "description": "Rhythm, vocabulary, habits of speech, and what they never say. Sent to the AI every turn."
         },
+        "style_rules": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "Rules for how their prose is written, one per line, for example 'No em dashes' or 'Actions in asterisks'. Keep the voice examples consistent with these; the AI copies examples closely. Sent to the AI every turn.",
+            "x-group": "voice"
+        },
         "power_narrative": {
             "type": "string",
             "x-group": "personality",
-            "description": "Their abilities in story terms. Not sent to the AI yet; recorded for later systems."
+            "description": "Their abilities in story terms. Sent to the AI every turn."
         },
         "knowledge_boundaries": {
             "type": "object",
@@ -146,10 +159,22 @@
                         "type": "string"
                     },
                     "description": "Things they don't know. The AI deflects in character instead of inventing."
+                },
+                "believes_wrongly": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Things they're certain of that aren't true. The AI treats them as true for this character."
                 }
             },
             "x-group": "knowledge",
             "description": "What they know and don't. The AI stays inside these limits. Sent to the AI every turn."
+        },
+        "cover_story": {
+            "type": "string",
+            "description": "The face they show the world: what they claim to be, and how they answer when someone challenges it. The AI keeps to it unless a secret is unlocked. Sent to the AI every turn.",
+            "x-group": "knowledge"
         },
         "relationships": {
             "type": "array",
@@ -185,7 +210,7 @@
                 }
             },
             "x-group": "knowledge",
-            "description": "People they know by name. Not sent to the AI yet; recorded for later systems."
+            "description": "People they know by name. Sent to the AI every turn."
         },
         "secrets": {
             "type": "array",
@@ -240,7 +265,7 @@
             },
             "minItems": 1,
             "x-group": "knowledge",
-            "description": "What they hide and what reveals it. Not sent to the AI yet; recorded for later systems. Until secrets are wired in, anything the NPC must never reveal also belongs in their personality or a resistance example."
+            "description": "What they hide. The AI always knows these and keeps them hidden; on a turn where the reveal condition is met, the relay tells it that it may reveal one. Sent to the AI every turn."
         },
         "few_shot_examples": {
             "type": "array",

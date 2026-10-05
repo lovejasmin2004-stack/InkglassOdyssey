@@ -160,6 +160,7 @@ class NpcGoals(BaseModel):
 class NpcKnowledgeBoundaries(BaseModel):
     knows: list[str]
     does_not_know: list[str]
+    believes_wrongly: list[str] | None = None
 
 
 class NpcRelationship(BaseModel):
@@ -271,6 +272,9 @@ class NpcPersonality(BaseModel):
     hit_die: Literal[6, 8, 10, 12]
 
     # Narrative (LLM-facing)
+    appearance: str | None = None
+    cover_story: str | None = None
+    style_rules: list[str] | None = None
     personality_background: str
     goals: NpcGoals
     weaknesses_fears: str

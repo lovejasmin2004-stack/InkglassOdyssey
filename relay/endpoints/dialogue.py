@@ -48,6 +48,7 @@ from relay.ai.game_context import (
     resolve_character_id,
 )
 from relay.ai.npc_loader import NpcLoadError, load_npc
+from relay.ai.npc_sections import unlocked_secrets
 from relay.ai.rp_prompts import (
     build_analysis_messages,
     build_final_prose_messages,
@@ -665,6 +666,10 @@ async def _handle_rp_turn(
         return
     ability_scores = char_mechanics.ability_scores
     skill_profs = char_mechanics.skill_proficiencies
+    # Inputs for secret unlocking: relationship with this NPC, and story flags on
+    # the character or the NPC.
+    relationship_score = game_context.npc_relationship_score if game_context else 0
+    story_flags = [*game_context.world_flags, *game_context.npc_flags] if game_context else []
     level = char_mechanics.level
     conditions = char_mechanics.conditions
     exhaustion_level = char_mechanics.exhaustion_level
@@ -792,6 +797,8 @@ async def _handle_rp_turn(
                 "character_id": character_id,
                 "session_id": session_id,
                 "world_id": world_id,
+                "relationship_score": relationship_score,
+                "story_flags": story_flags,
             }
             logger.info(
                 "Check proposals sent, awaiting player confirmation",
@@ -826,6 +833,8 @@ async def _handle_rp_turn(
             character_id=character_id,
             session_id=session_id,
             world_id=world_id,
+            relationship_score=relationship_score,
+            story_flags=story_flags,
         )
 
     except anthropic.APIError as e:
@@ -884,6 +893,8 @@ async def _handle_check_confirm(
             character_id=state.get("character_id"),
             session_id=state.get("session_id", ""),
             world_id=state.get("world_id", ""),
+            relationship_score=state.get("relationship_score", 0),
+            story_flags=state.get("story_flags"),
             level=state["level"],
             conditions=state["conditions"],
             environmental_effects=state["environmental_effects"],
@@ -931,6 +942,8 @@ async def _resolve_and_finish_rp(
     character_id: str | None = None,
     session_id: str = "",
     world_id: str = "",
+    relationship_score: int = 0,
+    story_flags: list[str] | None = None,
 ) -> None:
     """Resolve checks, send results/animations/scene, then stream final prose."""
     if chain_depth >= _MAX_AI_CHAIN_DEPTH:
@@ -1132,6 +1145,8 @@ async def _resolve_and_finish_rp(
     # === CALL 2: Final prose with check results ===
     draft = analysis.get("draft_response", "")
     # (#R10) Include passive hints in final prose call
+    # The relay decides which secrets this turn unlocks (invariant #8).
+    secrets_now = unlocked_secrets(npc, check_results, relationship_score=relationship_score, flags=story_flags)
     final_messages = build_final_prose_messages(
         player_prose,
         draft,
@@ -1139,6 +1154,7 @@ async def _resolve_and_finish_rp(
         _trim_history(history[:-1]),
         passive_hints=passive_hints if passive_hints else None,
         npc_memory_summary=npc_memory,
+        unlocked_secrets=secrets_now or None,
     )
 
     full_response = ""

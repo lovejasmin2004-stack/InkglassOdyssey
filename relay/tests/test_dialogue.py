@@ -811,6 +811,59 @@ class TestRpTurn:
         assert check["modifier"] == 6
 
 
+class TestSecretUnlock:
+    """A passed check reaching a secret's DC lets the final call reveal it; anything less doesn't."""
+
+    def _run_turn(self, secret_dc: int) -> str:
+        from relay.schemas import NpcSecret
+
+        npc = _make_npc().model_copy(
+            update={
+                "secrets": [
+                    NpcSecret(
+                        content="The pointed hat is a pinned-up brimmed hat.",
+                        reveal_condition="check_type_and_dc",
+                        secret_type="identity",
+                        reveal_check_type="insight",
+                        reveal_check_dc=secret_dc,
+                    )
+                ]
+            }
+        )
+        mock_client = MagicMock()
+        mock_client.messages.create = AsyncMock(
+            return_value=_mock_analysis_response(checks=[{"skill": "insight", "dc": 12, "reason": "Reading his face"}])
+        )
+        mock_client.messages.stream = MagicMock(return_value=_mock_stream_context("He sighs."))
+
+        with (
+            patch("relay.endpoints.dialogue.mark_stale_turns", return_value=0),
+            patch("relay.endpoints.dialogue.get_pending_turns", return_value=[]),
+            patch("relay.endpoints.dialogue.load_npc", return_value=npc),
+            patch("relay.endpoints.dialogue._get_client", return_value=mock_client),
+            # d20 of 15; the seeded character's insight modifier is +6, so the total is 21.
+            patch("relay.checks.resolver.random.randint", return_value=15),
+        ):
+            with TestClient(app, raise_server_exceptions=False) as client:
+                with client.websocket_connect("/dialogue") as ws:
+                    ws.send_text(_auth_msg(_session_token(mode="multiplayer")))
+                    ws.send_text(json.dumps({"type": "rp_turn", "npc_id": "test_npc", "text": "Your hat is odd."}))
+                    msgs = _recv_all(ws, until_type="stream_end")
+
+        assert any(m["type"] == "stream_end" for m in msgs), msgs
+        return mock_client.messages.stream.call_args.kwargs["messages"][-1]["content"]
+
+    def test_check_total_reaching_the_secret_dc_unlocks_it(self) -> None:
+        final_prompt = self._run_turn(secret_dc=20)
+        assert "UNLOCKED THIS TURN" in final_prompt
+        assert "pinned-up brimmed hat" in final_prompt
+
+    def test_check_total_below_the_secret_dc_keeps_it_hidden(self) -> None:
+        final_prompt = self._run_turn(secret_dc=25)
+        assert "UNLOCKED" not in final_prompt
+        assert "pinned-up brimmed hat" not in final_prompt
+
+
 # ---------------------------------------------------------------------------
 # Scene validation and turn-in-progress guard
 # ---------------------------------------------------------------------------

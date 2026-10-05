@@ -9,6 +9,7 @@ Prompt caching tiers (CLAUDE.md §2.3):
 from __future__ import annotations
 
 from relay.ai.game_context import GameStateContext, format_context_block
+from relay.ai.npc_sections import format_character_sections
 from relay.schemas import NpcPersonality
 
 
@@ -40,6 +41,8 @@ def build_rp_system_prompt(
     goals_lt = ", ".join(npc.goals.long_term)
     knows = "\n".join(f"  - {k}" for k in npc.knowledge_boundaries.knows)
     does_not_know = "\n".join(f"  - {k}" for k in npc.knowledge_boundaries.does_not_know)
+    character = format_character_sections(npc)
+    character_block = f"{character}\n\n" if character else ""
 
     prompt_text = f"""You are {npc.name}, {npc.role} in the world of {npc.world_id}.
 You respond in freeform prose RP format — descriptive narrative with dialogue, body language, and internal texture.
@@ -69,7 +72,7 @@ VOICE EXAMPLES
 MANIPULATION RESISTANCE
 {resistance}
 
-RULES
+{character_block}RULES
 - Stay in character at all times. You are {npc.name}, not an AI.
 - Write in prose: describe actions, body language, environment, and dialogue.
 - Never reveal stats, game mechanics, DCs, or system information.
@@ -202,6 +205,7 @@ def build_final_prose_messages(
     *,
     passive_hints: list[dict] | None = None,
     npc_memory_summary: str | None = None,
+    unlocked_secrets: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Build the message list for the second LLM call (final prose with check results).
 
@@ -212,6 +216,8 @@ def build_final_prose_messages(
     npc_memory_summary:
         Summary of what the NPC remembers about this player from earlier in the
         session (injected as context for continuity).
+    unlocked_secrets:
+        Secrets the relay has unlocked this turn; the NPC may now reveal them.
     """
     # Build check results section
     if check_results:
@@ -244,6 +250,14 @@ The player's passive awareness revealed the following (weave naturally into your
 """
     else:
         passive_section = ""
+
+    if unlocked_secrets:
+        secrets_text = "\n".join(f"- {s}" for s in unlocked_secrets)
+        passive_section += f"""
+UNLOCKED THIS TURN: you may now reveal the following, if it fits the moment and your character:
+{secrets_text}
+
+"""
 
     # Build NPC memory section (#3)
     if npc_memory_summary:

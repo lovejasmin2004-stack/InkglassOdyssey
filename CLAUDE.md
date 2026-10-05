@@ -222,7 +222,9 @@ Only `inkglass_dark` has content so far.
 
 ## 6. Schema Definitions
 
-All schemas are fully defined in docs/schemas reference.pdf. Pydantic models in relay/schemas.py mirror /schemas/*.json exactly. Schemas may also carry display-only annotations for the Workshop form: `description` (help text), and `x-groups` on the root with `x-group` on each property (section order, titles, and which sections start collapsed). Validation ignores them, and they never add fields. Content files are validated against their schema when saved through the Admin Workshop (relay/admin/reload.py). Every content file is also validated on every push by relay/tests/test_content_files.py (CI step 1), which reuses the Workshop's content-type registry; run it locally before committing.
+All schemas are fully defined in docs/schemas reference.pdf. Pydantic models in relay/schemas.py mirror /schemas/*.json exactly. Schemas may also carry display-only annotations for the Workshop form: `description` (help text), and `x-groups` on the root with `x-group` on each property (section order, titles, and which sections start collapsed). Validation ignores them, and they never add fields.
+
+Fields added since docs/schemas reference.pdf was written (October 2026, all optional): `npc_personality` gained `appearance`, `cover_story`, `style_rules`, and `knowledge_boundaries.believes_wrongly`. These, plus `power_narrative`, `relationships` and `secrets`, are now sent to the AI in both RP and quick-chat prompts (relay/ai/npc_sections.py). Secrets are always in the prompt with an instruction to keep them hidden; whether one may be revealed on a turn is decided by the relay from a passed check reaching the secret's DC, the relationship score, or a story flag, never by the LLM. Content files are validated against their schema when saved through the Admin Workshop (relay/admin/reload.py). Every content file is also validated on every push by relay/tests/test_content_files.py (CI step 1), which reuses the Workshop's content-type registry; run it locally before committing.
 
 ## 7. Code Conventions
 
