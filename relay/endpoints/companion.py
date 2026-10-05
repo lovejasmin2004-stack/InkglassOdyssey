@@ -239,24 +239,30 @@ async def post_incapacitate(
     char.relationships = relationships
     flag_modified(char, "relationships")
 
-    await log_companion_state(db, CompanionStateChange(
-        character_id=char.id,
-        npc_id=companion_id,
-        field="exhaustion_level",
-        old_value=old_exhaustion,
-        new_value=result["exhaustion_level"],
-        source="incapacitation",
-        reason="companion reduced to 0 HP",
-    ))
-    await log_companion_state(db, CompanionStateChange(
-        character_id=char.id,
-        npc_id=companion_id,
-        field="loyalty_strain",
-        old_value=old_strain,
-        new_value=result["loyalty_strain"],
-        source="incapacitation",
-        reason="companion reduced to 0 HP",
-    ))
+    await log_companion_state(
+        db,
+        CompanionStateChange(
+            character_id=char.id,
+            npc_id=companion_id,
+            field="exhaustion_level",
+            old_value=old_exhaustion,
+            new_value=result["exhaustion_level"],
+            source="incapacitation",
+            reason="companion reduced to 0 HP",
+        ),
+    )
+    await log_companion_state(
+        db,
+        CompanionStateChange(
+            character_id=char.id,
+            npc_id=companion_id,
+            field="loyalty_strain",
+            old_value=old_strain,
+            new_value=result["loyalty_strain"],
+            source="incapacitation",
+            reason="companion reduced to 0 HP",
+        ),
+    )
 
     await db.commit()
 

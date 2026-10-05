@@ -257,7 +257,6 @@ class TestRateLimiterKeying:
         # to trigger rate limiter with IP-based key (middleware blocks, but
         # rate limiter runs after auth middleware so it won't reach rate_limit
         # for unauthenticated requests). Instead test _get_rate_limit_key directly.
-        from unittest.mock import MagicMock
 
         req = MagicMock()
         req.state = MagicMock(spec=[])  # No 'token' attribute
@@ -266,7 +265,6 @@ class TestRateLimiterKeying:
         assert _get_rate_limit_key(req) == "192.168.1.100"
 
     def test_authenticated_key_uses_player_id(self) -> None:
-        from unittest.mock import MagicMock
 
         req = MagicMock()
         req.state.token = AccountTokenPayload(

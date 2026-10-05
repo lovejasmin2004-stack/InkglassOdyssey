@@ -2,9 +2,9 @@
 
 *Project reference document for Claude Code. Read this before making any changes.*
 
-*Companion file: REFERENCES.md (patterns from existing games).*
+*Companion file: REFERENCES.md (patterns from existing games) — planned, not yet written.*
 
-*Last updated: May 2026 — Revision 5. Subsystem design documents extracted to docs/. This file is the architectural spine; design docs carry the detail.*
+*Last updated: September 2026 — Revision 5.1. Doc references, repository tree and tooling claims corrected to match the repository; anything not yet built is marked (planned). Subsystem design documents live in docs/. This file is the architectural spine; design docs carry the detail.*
 
 ---
 
@@ -19,9 +19,8 @@ Read the relevant design document **before** working on the listed directories o
 | docs/companion system.pdf | relay/companions/ | Recruitment, combat AI, incapacitation, loyalty strain, ambient behaviour, persistence, reunion |
 | docs/faction system.pdf | relay/factions/, shop pricing | Standing tiers, propagation, effects, schema |
 | docs/content authoring.pdf | NPC files, item files, lore, recipes, world events | Authoring quality priorities, balance guidance, lore chunk quality, Workshop form structure |
-| docs/narrative control.pdf | relay/narrative/, relay/admin/ | Admin/DM/Solo interfaces, content override model, plot beats, world reset, admin interface |
+| docs/narrative control.pdf | relay/narrative/, relay/admin/, narrative endpoints, Workshop UI | Admin/DM/Solo interfaces, content override model, plot beats and plot beat schema, world reset, admin interface, narrative control panels |
 | docs/schemas reference.pdf | /schemas/, relay/schemas.py | Complete field definitions for all JSON schemas |
-| docs/narrative control.pdf | Narrative endpoints, Workshop UI | Canonical spec for narrative control panels and plot beat schema |
 | docs/prompt_engineering.md (planned) | relay/ai/rp_prompts.py, chat_prompts.py | Prompt structure, few-shot format, check result integration |
 | docs/architecture_research.md | Any new subsystem adoption | Comparative analysis of ai-gamemaster, Evennia, ai_rpg — adoptable patterns and skip list |
 | docs/design_proposals.md | relay/narrative/, templates/, scenarios/, relay/ai/ | Content tiers, blueprints, narrative layers, consequence system, prompt builder gaps, menu concept |
@@ -88,7 +87,7 @@ JSON frames with type discriminator. Client → relay: `rp_turn`, `quickchat_tur
 
 **EAS:** prose-derived animation directives validated against world registry before Unity receives them. LLM proposes, EAS validates, Unity executes.
 
-**Prompt caching:** Tier 1 (static, cache aggressively), Tier 2 (session-stable, invalidate on scene changes), Tier 3 (dynamic, never cached). See docs/prompt_engineering.md.
+**Prompt caching:** Tier 1 (static, cache aggressively), Tier 2 (session-stable, invalidate on scene changes), Tier 3 (dynamic, never cached). See docs/prompt_engineering.md (planned). Current implementation: relay/ai/rp_prompts.py.
 
 **Narrative Director:** rules-based pacing agent (not LLM-driven). Evaluates triggers after each turn, writes director_signal to scene_state. Scene narrator's next LLM call receives the signal. Director proposes; narrator executes; NPC responds.
 
@@ -132,101 +131,110 @@ TTS deferred to Phase 4 (ADR required for provider selection).
 
 ## 4. Traversal System
 
-Each world defines traversal modes in world_config.json. Unity reads at world load. Every mode carries: canonical ID, display name, Unity controller class, access condition, operating cost. Per-world traversal configurations documented in the world-specific sections below this header (retained from v5 — no change to traversal content).
+Each world defines traversal modes in world_config.json. Unity reads at world load. Every mode carries: canonical ID, display name, Unity controller class, access condition, operating cost. Per-world traversal configurations are not currently documented anywhere in the repository: the world-specific sections this header once introduced were not carried into Revision 5 or its PDF copy (CLAUDEmd.pdf). Section 1.1 lists each world's primary traversal. No relay traversal code exists yet (Phase 2). Rewrite the per-world sections before implementing traversal.
 
 ## 5. Repository Structure
+
+Entries marked (planned) are part of the design but do not exist yet.
 
 ```
 inkglass/
 ├── CLAUDE.md                       THIS FILE
-├── REFERENCES.md
+├── CLAUDEmd.pdf                    PDF copy of CLAUDE.md Revision 5 (May 2026)
+├── USER GUIDE.pdf                  Step-by-step build guide for the project owner
+├── _architecture.html              Mermaid system-architecture diagram
+├── REFERENCES.md                   (planned)
 ├── README.md
 ├── .gitignore
-├── .claude/
-│   ├── settings.json               Hooks and permissions
-│   ├── agents/                     Architect, coder, tester, reviewer
-│   └── commands/                   Slash command library
-├── .github/
-│   └── workflows/
-│       └── ci.yml                  CI pipeline (see Section 7.5)
+├── .env.example                    Every setting relay/config.py reads
+├── pyproject.toml                  Project metadata, pytest + ruff config
+├── requirements.txt                Pinned runtime + dev dependencies
+├── alembic.ini
+├── .claude/                        (planned) settings.json hooks, agents/, commands/
+├── .github/workflows/ci.yml        CI pipeline, see Section 7.5
 ├── docs/
-│   ├── combat_system.md
-│   ├── economy_balance.md
-│   ├── companion_system.md
-│   ├── faction_system.md
-│   ├── content_authoring.md
-│   ├── narrative_control.md
-│   ├── schemas_reference.md
+│   ├── combat system.pdf
+│   ├── economy balance.pdf
+│   ├── companion system.pdf
+│   ├── faction system.pdf
+│   ├── content authoring.pdf
+│   ├── narrative control.pdf
+│   ├── schemas reference.pdf
+│   ├── architecture_research.md
+│   ├── design_proposals.md
 │   ├── narrative-control-ui.pdf    (planned)
 │   └── prompt_engineering.md       (planned)
 ├── relay/
-│   ├── main.py
-│   ├── config.py
+│   ├── main.py                     FastAPI app, router registration
+│   ├── config.py                   Settings from environment / .env
+│   ├── database.py                 Async engine, AsyncSessionLocal, get_db
 │   ├── logging_config.py           Structured JSON logging
 │   ├── models.py                   SQLAlchemy ORM
-│   ├── schemas.py                  Pydantic — mirrors /schemas/*.json
+│   ├── schemas.py                  Pydantic, mirrors /schemas/*.json
+│   ├── registry.py                 Canonical IDs: abilities, skills, conditions, damage types, environment effects
+│   ├── mutations.py                Typed audit models for state changes (source, reason, before/after)
+│   ├── state_log.py                Writes StateChangeLog rows from mutation models
 │   ├── migrations/                 Alembic
-│   ├── ai/
-│   ├── npcs/
-│   ├── scenes/                     narrator.py, director.py
-│   ├── canon/
-│   ├── checks/
-│   ├── animation/
-│   ├── world/
-│   ├── economy/
-│   ├── combat/                     resolver.py, initiative.py, conditions.py, death_state.py
-│   ├── companions/                 manager.py, combat_ai.py, ambient.py, loyalty.py
+│   ├── ai/                         rp_prompts.py, chat_prompts.py, npc_loader.py, game_context.py
+│   ├── checks/                     resolver.py
+│   ├── combat/                     resolver.py, initiative.py, conditions.py, damage.py, death_state.py, lifecycle.py
+│   ├── companions/                 manager.py, combat_ai.py, ambient.py, loyalty.py, relationship.py
 │   ├── factions/                   reputation.py
-│   ├── narrative/                  events.py, plot_beats.py, room_state.py
-│   ├── admin/                      app.py (port 8081), static/, reload.py
-│   ├── traversal/
+│   ├── economy/                    wallet.py, shop.py, pricing.py
+│   ├── crafting/                   crafter.py, gathering.py, recipe/region/fauna loaders
+│   ├── consequences/               evaluator.py, profiles.py, npc_state.py, world_flags.py
+│   ├── narrative/                  threads.py; events.py, plot_beats.py, room_state.py (planned)
+│   ├── generation/                 NPC + event-arc generation (no endpoint yet)
+│   ├── journal/                    aggregator.py (no endpoint yet)
+│   ├── handlers/                   companion.py, inventory.py
+│   ├── world/                      Content loaders
+│   ├── persistence/                pending_turns.py
 │   ├── auth/                       tokens.py, middleware.py
-│   ├── middleware/                  rate_limit.py
-│   ├── persistence/
-│   ├── endpoints/
-│   ├── tests/
-│   └── pyproject.toml
-├── schemas/
-│   ├── character_sheet.json
-│   ├── npc_personality.json
-│   ├── ability.json
-│   ├── quest.json
-│   ├── canon_fact.json
-│   ├── scene_state.json
-│   ├── world_config.json
-│   ├── world_events.json
-│   ├── animation_directive.json
-│   ├── item.json
-│   ├── recipe.json
-│   ├── shop_data.json
-│   ├── faction.json
-│   └── traversal_mode.json
+│   ├── middleware/                 rate_limit.py
+│   ├── admin/                      app.py (port 8081), static/, reload.py
+│   ├── endpoints/                  One file per resource: character, checks, combat, companion, craft,
+│   │                               dialogue, dice, faction, scene, session, shop, wallet
+│   ├── scenes/                     (planned) narrator.py, director.py
+│   ├── canon/                      (planned) canon mutation / diff agent
+│   ├── traversal/                  (planned)
+│   └── tests/                      pytest; *_live.py tests call the real API
+├── schemas/                        ability, animation_directive, character_sheet, event_arc_blueprint,
+│                                   event_arc_instance, faction, fauna, item, lore, npc_personality,
+│                                   npc_template, quest, recipe, region, scenario, scene_state,
+│                                   shop_data, traversal_mode, world_config, world_events (.json)
+│                                   canon_fact.json (planned)
+├── abilities/{world_id}/
 ├── animations/{world_id}/registry.json
+├── crafting/{world_id}/            Recipes
+├── factions/{world_id}/
+├── fauna/{world_id}/
+├── items/{world_id}/
 ├── lore/{world_id}/
 ├── npcs/{world_id}/
-├── items/{world_id}/
-├── crafting/{world_id}/
-├── abilities/{world_id}/
-├── scenarios/{world_id}/
 ├── quests/{world_id}/
-├── regions/{world_id}/
-└── unity/                          Unity project root
+├── regions/{world_id}/             Region files + world_config.json
+├── scenarios/{world_id}/           Scenarios + blueprints.json (event arcs)
+├── templates/{world_id}/           NPC templates
+└── unity/                          (planned) Unity project root, Phase 1
 ```
+
+Only `inkglass_dark` has content so far.
 
 ## 6. Schema Definitions
 
-All schemas are fully defined in docs/schemas reference.pdf. Pydantic models in relay/schemas.py mirror /schemas/*.json exactly. CI validates all content files against schemas on every push.
+All schemas are fully defined in docs/schemas reference.pdf. Pydantic models in relay/schemas.py mirror /schemas/*.json exactly. Content files are validated against their schema when saved through the Admin Workshop (relay/admin/reload.py). Every content file is also validated on every push by relay/tests/test_content_files.py (CI step 1), which reuses the Workshop's content-type registry; run it locally before committing.
 
 ## 7. Code Conventions
 
 ### 7.1 Python (Relay)
 
-- `ruff format` + `ruff check` — enforced by PostToolUse hook
+- `ruff format` + `ruff check` — run both before committing (PostToolUse hook planned; no `.claude/settings.json` exists yet)
 - Type hints on all public functions (`from __future__ import annotations`)
 - Pydantic models mirror JSON schemas exactly
 - Async-by-default for all I/O
 - One endpoint per file under `relay/endpoints/`
-- Tests via pytest. Mutation testing (mutmut) on `relay/checks/`, `relay/economy/`, `relay/canon/` — 85%+ score. Other modules: 90%+ line coverage.
+- Tests via pytest: `pytest relay/tests/ --ignore-glob='*_live.py'` runs the offline suite; `*_live.py` tests call the real Anthropic API and need `ANTHROPIC_API_KEY`.
+- Targets: mutation testing (mutmut) on `relay/checks/`, `relay/economy/`, `relay/canon/` — 85%+ score; other modules 90%+ line coverage. Neither mutmut nor coverage measurement is set up yet.
 - No global state. Dependencies via FastAPI `Depends()`. DB sessions via `get_db` (yields async SQLAlchemy session, commits on success, rolls back on exception).
 - Secrets via environment variables only. Never commit `.env`.
 - Rate limiting on all endpoints. WebSocket: max 1 message per 3 seconds per session.
@@ -247,6 +255,8 @@ Every NPC file must pass the probe suite before merge. Shop/transport NPCs valid
 
 ### 7.5 CI Pipeline (GitHub Actions)
 
+`.github/workflows/ci.yml` runs on every push and pull request. Implemented: steps 1, 4, 6, and the test half of 5. Planned: step 2 (probe suite), step 3 (name blocklist) and mutation testing. When a content type is added, register it in `CONTENT_TYPES` in relay/admin/reload.py so both the Workshop and CI validate it.
+
 1. JSON schema validation (all content directories)
 2. NPC probe suite (voice, knowledge, manipulation resistance, animation)
 3. Canon character name blocklist (AU directories)
@@ -264,7 +274,9 @@ All errors: `{ code (string), message (string), turn_id (optional), narrative_hi
 
 POST /session/start, POST /session/end (includes level_increment + canon diff), GET /session/{id}/state, GET/POST/PATCH /character, GET /npc/{id}, WS /dialogue, POST/GET/POST /scene, POST /dice/roll, POST /checks/implicit, POST/GET/POST /combat, GET/PATCH /quest, GET /lore/search, GET/POST/PATCH /canon, GET flora/fauna, POST /gather, GET/POST /shop, POST /craft, GET/PATCH /inventory, POST /traversal, PATCH /player position, GET /analytics.
 
-Full endpoint tables including companion, faction, narrative control, DM workshop, and admin endpoints are in the v5 reference and docs/narrative control.pdf.
+The full endpoint tables for companion, faction, narrative control, DM Workshop and admin endpoints that earlier revisions referred to are not in the repository (neither this file, CLAUDEmd.pdf nor docs/ contains them). docs/narrative control.pdf names the reset and admin reload endpoints. Rebuild the tables before implementing those surfaces.
+
+**Implemented as of September 2026** (relay, port 8000): POST /session/start, POST /session/{id}/end, GET /session/{id}/state, GET/POST /character, GET/PATCH /character/{id}, GET /me, WS /dialogue, POST /scene, GET/PATCH /scene/{id}, POST /scene/{id}/end, POST /dice/roll, POST /checks/implicit, POST /checks/contested, POST /combat/{attack,save,heal,initiative,rest,tick-conditions}, POST /companions/recruit, GET /companions/{character_id}, companion dismiss/incapacitate/recover/combat-action, GET faction standings and log, PATCH /factions/{faction_id}/standing, GET /shop/{npc_id} with buy/sell, POST /craft, POST /gather, wallet endpoints, GET /health. Admin app (port 8081): content CRUD + validation, RP Tester sessions. Not yet implemented: /npc, /quest, /lore/search, /canon, flora/fauna GET, /inventory, /traversal, player position, /analytics, narrative control and DM Workshop endpoints.
 
 ## 9. Database Migration
 
@@ -297,12 +309,12 @@ Fandom AU: no canon dialogue, no canon names, no recognisable locations. NPC fil
 | 1 | Relay is source of truth for all persistent state |
 | 2 | Schemas are versioned — breaking changes need ADR + simultaneous relay/client update |
 | 3 | RelayClient is the only HTTP surface in Unity |
-| 4 | API keys stay in relay — pre-write hook enforces |
+| 4 | API keys stay in relay — pre-write hook enforces (hook planned; until then, enforced by review) |
 | 5 | Fandom AU: no canon names |
 | 6 | Solo and multiplayer share content |
 | 7 | Lore is data, not code |
 | 8 | LLM is never authoritative over mechanical state |
-| 9 | Every NPC file includes manipulation-resistance examples (CI validates) |
+| 9 | Every NPC file includes manipulation-resistance examples (required by npc_personality schema, minimum one; enforced in CI) |
 | 10 | RP mode and quick-chat mode are distinct and never mixed |
 | 11 | Animation directives are relay-validated before Unity receives them |
 | 12 | Session state persisted before processing (pending-turn) |
@@ -346,6 +358,8 @@ Fandom AU: no canon dialogue, no canon names, no recognisable locations. NPC fil
 
 **Phase 0 (Current):** Relay spine. Logging → Alembic → schemas → models → auth → character endpoints → WebSocket dialogue → session/scene → RAG → combat resolver → passive checks → factions → companions → admin interface (RP Tester + Workshop). No Unity.
 
+*Status, September 2026:* every Phase 0 step is built except RAG (no embeddings, no lore search, lore not injected into prompts). Built ahead of phase: economy, shops, crafting and gathering (Phase 2), plus design_proposals.md systems (consequences, narrative threads, event arcs, NPC generation, journal); generation and journal have no endpoints yet. Account tokens can only be minted in code (no application or sign-up flow). Not yet done: a live end-to-end RP session with a real API key, which should come before new systems.
+
 **Phase 1:** Unity vertical slice. One scene, one NPC, one combat encounter, character creation, FishNet host-only, basic traversal. Exit: 60–90 min RP session with visible NPC body language.
 
 **Phase 2:** Three original worlds. Traversal controllers, economy, items, flora/fauna, crafting, narrative director, canon mutation, companion combat AI, Narrative Control Panel, DM Workshop. Multiplayer testing → assess Postgres migration.
@@ -360,4 +374,4 @@ Fandom AU: no canon dialogue, no canon names, no recognisable locations. NPC fil
 
 Request clarification before proceeding for: schema changes, new service integrations, relay-as-source-of-truth changes, multi-world impacts, trust architecture changes, new dependencies, mixing RP/quick-chat, canon mutation procedure changes, new traversal types, economy changes, WebSocket protocol changes, error schema changes, condition/death mechanics, companion combat behaviour, faction propagation rules, workshop access changes, plot beat schema changes.
 
-*Last updated: May 2026. Revision 5. CLAUDE.md is canonical for architecture and conventions. Design documents in docs/ are canonical for subsystem specifications. If either disagrees with code, the code is wrong. Update when architecture, schemas, or conventions change.*
+*Last updated: September 2026. Revision 5.1. CLAUDE.md is canonical for architecture and conventions. Design documents in docs/ are canonical for subsystem specifications. If either disagrees with code, the code is wrong. Update when architecture, schemas, or conventions change.*

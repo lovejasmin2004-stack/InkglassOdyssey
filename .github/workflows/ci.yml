@@ -1,0 +1,49 @@
+# CI pipeline — CLAUDE.md §7.5.
+# Runs steps 1 (content schema validation, via relay/tests/test_content_files.py),
+# 4 (ruff), 5 (offline tests) and 6 (Alembic). Steps 2 (NPC probe suite),
+# 3 (canon name blocklist) and mutation testing are not built yet.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Lint (ruff check)
+        run: ruff check relay
+
+      - name: Format (ruff format --check)
+        run: ruff format --check relay
+
+      - name: Migrations apply cleanly and match the models
+        # Scoped to this step: relay/tests/test_config_logging.py asserts on
+        # default settings, so these must not leak into the test step.
+        env:
+          INKGLASS_JWT_SECRET: ci-only-throwaway-secret-0000000000000000
+          DATABASE_URL: sqlite+aiosqlite:///./ci_migrations.db
+        run: |
+          alembic upgrade head
+          alembic check
+
+      - name: Tests (offline suite, includes content schema validation)
+        # *_live.py tests call the real Anthropic API and are run by hand.
+        run: pytest relay/tests --ignore-glob='*_live.py' -q
+        timeout-minutes: 10

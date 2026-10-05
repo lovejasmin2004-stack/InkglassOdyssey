@@ -84,10 +84,7 @@ def _satisfies_excluded_combinations(
 ) -> bool:
     """Check that no pair of excluded phase_ids both appear."""
     selected_ids = {p.phase_id for p in selected}
-    return all(
-        not (len(pair) == 2 and pair[0] in selected_ids and pair[1] in selected_ids)
-        for pair in excluded
-    )
+    return all(not (len(pair) == 2 and pair[0] in selected_ids and pair[1] in selected_ids) for pair in excluded)
 
 
 def _validate_selection(

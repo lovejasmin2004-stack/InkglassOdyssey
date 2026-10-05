@@ -361,9 +361,9 @@ def get_defense_modifiers(
             continue
         if cdef.grants_advantage_to_attackers:
             if cdef.range_dependent_advantage is not None:
-                if cdef.range_dependent_advantage == "melee_only" and attack_range == "melee":
-                    attackers_have_advantage = True
-                elif cdef.range_dependent_advantage == "ranged_only" and attack_range == "ranged":
+                if (cdef.range_dependent_advantage == "melee_only" and attack_range == "melee") or (
+                    cdef.range_dependent_advantage == "ranged_only" and attack_range == "ranged"
+                ):
                     attackers_have_advantage = True
                 else:
                     attackers_have_disadvantage = True

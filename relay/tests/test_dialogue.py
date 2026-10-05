@@ -5,14 +5,19 @@ All tests mock the Anthropic client so no API key is needed.
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 from starlette.testclient import WebSocketTestSession
 
+import relay.database as _db
 from relay.auth.tokens import create_account_token, create_session_token
 from relay.main import app
 
@@ -102,6 +107,66 @@ def _make_npc():
         skill_proficiencies=["medicine", "nature"],
         hp_max=35,
     )
+
+
+_TEST_CHARACTER_ID = "char_001"
+
+
+@pytest.fixture(autouse=True)
+def _seeded_db(tmp_path):
+    """Point every dialogue test at a fresh DB seeded with the token's session.
+
+    RP turns resolve checks from the DB character (Invariant #1), so the
+    session in ``_session_token`` must exist with a linked character.
+    """
+    from relay.models import Account, Base, Character, GameSession
+
+    # NullPool: each TestClient runs its own event loop, so connections must not
+    # be pooled across tests.
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'dialogue.db'}", poolclass=NullPool)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async def _seed() -> None:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        async with session_factory() as db:
+            db.add(Account(id="player_001", email="player_001@test.local", password_hash="x", tier=1))
+            db.add(
+                Character(
+                    id=_TEST_CHARACTER_ID,
+                    player_id="player_001",
+                    world_id="inkglass_dark",
+                    name="Test Character",
+                    level=5,
+                    specialisation_path_id="none",
+                    ability_scores={
+                        "strength": 10,
+                        "dexterity": 14,
+                        "constitution": 12,
+                        "intelligence": 12,
+                        "wisdom": 16,
+                        "charisma": 10,
+                    },
+                    skill_proficiencies=["perception", "insight", "survival"],
+                    hp_max=30,
+                    hp_current=30,
+                )
+            )
+            db.add(
+                GameSession(
+                    id="sess_001",
+                    player_id="player_001",
+                    character_id=_TEST_CHARACTER_ID,
+                    world_id="inkglass_dark",
+                )
+            )
+            await db.commit()
+
+    asyncio.run(_seed())
+    original_factory = _db.AsyncSessionLocal
+    _db.AsyncSessionLocal = session_factory
+    yield
+    _db.AsyncSessionLocal = original_factory
 
 
 @pytest.fixture()
@@ -681,6 +746,69 @@ class TestRpTurn:
                 msg = json.loads(ws.receive_text())
                 assert msg["type"] == "error"
                 assert msg["code"] == "input_too_long"
+
+    @patch("relay.endpoints.dialogue.mark_stale_turns", return_value=0)
+    @patch("relay.endpoints.dialogue.get_pending_turns", return_value=[])
+    @patch("relay.endpoints.dialogue.load_npc")
+    @patch("relay.endpoints.dialogue._get_client")
+    def test_rp_turn_rejected_without_db_character(self, mock_get_client, mock_load_npc, _mock_pending, _mock_stale):
+        """A session with no character on record is refused, not run on client stats."""
+        orphan_token = create_session_token(
+            player_id="player_001",
+            world_id="inkglass_dark",
+            session_id="sess_missing",
+            tier=1,
+            role="player",
+            mode="multiplayer",
+        )
+        mock_load_npc.return_value = _make_npc()
+        mock_client = MagicMock()
+        mock_client.messages.create = AsyncMock(return_value=_mock_analysis_response())
+        mock_get_client.return_value = mock_client
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            with client.websocket_connect("/dialogue") as ws:
+                ws.send_text(_auth_msg(orphan_token))
+                ws.send_text(json.dumps(self._base_rp_msg()))
+                msg = json.loads(ws.receive_text())
+
+        assert msg["type"] == "error"
+        assert msg["code"] == "character_not_found"
+        mock_client.messages.create.assert_not_called()
+
+    @patch("relay.endpoints.dialogue.mark_stale_turns", return_value=0)
+    @patch("relay.endpoints.dialogue.get_pending_turns", return_value=[])
+    @patch("relay.endpoints.dialogue.load_npc")
+    @patch("relay.endpoints.dialogue._get_client")
+    def test_rp_turn_ignores_client_supplied_stats(self, mock_get_client, mock_load_npc, _mock_pending, _mock_stale):
+        """Check modifiers come from the DB character even when the client sends inflated stats."""
+        mock_load_npc.return_value = _make_npc()
+        analysis = _mock_analysis_response(
+            checks=[{"skill": "perception", "dc": 12, "reason": "Scanning the stalls"}],
+        )
+        mock_client = MagicMock()
+        mock_client.messages.create = AsyncMock(return_value=analysis)
+        mock_client.messages.stream = MagicMock(return_value=_mock_stream_context("She watches you."))
+        mock_get_client.return_value = mock_client
+
+        inflated = self._base_rp_msg(
+            character={
+                "ability_scores": {"wisdom": 30},
+                "skill_proficiencies": ["perception"],
+                "level": 20,
+                "conditions": [],
+            }
+        )
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            with client.websocket_connect("/dialogue") as ws:
+                ws.send_text(_auth_msg(_session_token(mode="multiplayer")))
+                ws.send_text(json.dumps(inflated))
+                msgs = _recv_all(ws, until_type="stream_end")
+
+        check = next(m for m in msgs if m["type"] == "check_result")
+        # Seeded DB character: wisdom 16 (+3) + level-5 proficiency (+3).
+        assert check["modifier"] == 6
 
 
 # ---------------------------------------------------------------------------
@@ -1347,13 +1475,18 @@ class TestCharacterMechanicsLoading:
 
     def test_load_character_mechanics_returns_db_stats(self):
         """load_character_mechanics returns data from the Character model."""
-        import asyncio
+        from relay.ai.game_context import load_character_mechanics
 
-        from relay.ai.game_context import CharacterMechanics, load_character_mechanics
+        result = asyncio.run(load_character_mechanics(_TEST_CHARACTER_ID))
+        assert result is not None
+        assert result.ability_scores["wisdom"] == 16
+        assert result.level == 5
+        assert "perception" in result.skill_proficiencies
 
-        # This test runs without a DB, so the function should return None
-        result = asyncio.run(load_character_mechanics("nonexistent_char"))
-        assert result is None
+    def test_load_character_mechanics_missing_returns_none(self):
+        from relay.ai.game_context import load_character_mechanics
+
+        assert asyncio.run(load_character_mechanics("nonexistent_char")) is None
 
     def test_character_mechanics_dataclass_frozen(self):
         """CharacterMechanics is immutable (frozen dataclass)."""
@@ -1372,7 +1505,7 @@ class TestCharacterMechanicsLoading:
         assert cm.level == 5
 
         # Should raise on attempt to modify
-        with pytest.raises(Exception):
+        with pytest.raises(dataclasses.FrozenInstanceError):
             cm.level = 10  # type: ignore[misc]
 
 

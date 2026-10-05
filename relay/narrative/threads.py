@@ -35,7 +35,7 @@ _MAX_THREAD_KEY_LENGTH = 80
 _MAX_SUMMARY_LENGTH = 300
 _MAX_RELATED_IDS = 5
 
-# Regex: only lowercase ASCII + digits + underscores, 2–80 chars
+# Regex: only lowercase ASCII + digits + underscores, 2-80 chars
 _THREAD_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*[a-z0-9]$")
 
 
