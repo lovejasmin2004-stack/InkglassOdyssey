@@ -171,6 +171,7 @@ def _build_session_analytics(session: GameSession, scenes: list[Scene]) -> dict:
     total_check_count = 0
     turn_latencies: list[int] = []
     player_turn_lengths: list[int] = []
+    tokens = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
 
     scene_analytics = []
     for s in scenes:
@@ -180,6 +181,8 @@ def _build_session_analytics(session: GameSession, scenes: list[Scene]) -> dict:
             total_llm_calls += s.analytics.get("llm_call_count", 0)
             total_check_pass += s.analytics.get("check_pass_count", 0)
             total_check_count += s.analytics.get("check_total_count", 0)
+            for field in tokens:
+                tokens[field] += s.analytics.get(field, 0)
             if "turn_latencies_ms" in s.analytics:
                 turn_latencies.extend(s.analytics["turn_latencies_ms"])
 
@@ -202,6 +205,12 @@ def _build_session_analytics(session: GameSession, scenes: list[Scene]) -> dict:
     check_pass_rate: float | None = None
     if total_check_count > 0:
         check_pass_rate = round(total_check_pass / total_check_count, 3)
+
+    # Share of prompt tokens served from the prompt cache (None until usage is recorded).
+    prompt_tokens = tokens["input_tokens"] + tokens["cache_read_input_tokens"] + tokens["cache_creation_input_tokens"]
+    cache_hit_rate: float | None = (
+        round(tokens["cache_read_input_tokens"] / prompt_tokens, 3) if prompt_tokens > 0 else None
+    )
 
     # Player turn length trend (average of first third vs last third)
     player_turn_length_trend: str | None = None
@@ -230,6 +239,8 @@ def _build_session_analytics(session: GameSession, scenes: list[Scene]) -> dict:
         "turn_latency_p95_ms": turn_latency_p95,
         "check_pass_rate": check_pass_rate,
         "player_turn_length_trend": player_turn_length_trend,
+        **tokens,
+        "cache_hit_rate": cache_hit_rate,
         "scenes": scene_analytics,
     }
 

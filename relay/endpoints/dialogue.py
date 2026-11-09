@@ -27,6 +27,7 @@ Improvements (step 7 — RP mode):
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import time
@@ -87,7 +88,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["dialogue"])
 
 _RATE_LIMIT_SECONDS = 3.0
-_MODEL = "claude-sonnet-4-6"
+
+
+def _model() -> str:
+    """Model that writes NPC replies (INKGLASS_MODEL)."""
+    return settings.model
+
+
+def _analysis_model() -> str:
+    """Model for the RP analysis call (INKGLASS_ANALYSIS_MODEL, else the reply model)."""
+    return settings.analysis_model or settings.model
+
 
 # Maximum length of player text input (characters).
 _MAX_INPUT_LENGTH = 8000
@@ -109,6 +120,36 @@ _MAX_AI_CHAIN_DEPTH = 10
 # API is unresponsive. The pending turn becomes stale after 5 min regardless,
 # but this releases the WebSocket sooner for a better player experience.
 _LLM_TIMEOUT_SECONDS = 45.0
+
+
+_USAGE_FIELDS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+
+
+def _record_usage(analytics: dict | None, response: object, *, call: str, model: str) -> None:
+    """Add a response's token usage to the connection analytics and log it.
+
+    Token counts only, never prose. Best-effort: metrics must not break a turn.
+    """
+    usage = getattr(response, "usage", None)
+    counts = {f: v for f in _USAGE_FIELDS if isinstance(v := getattr(usage, f, None), int)}
+    if not counts:
+        return
+    if analytics is not None:
+        for field, value in counts.items():
+            analytics[field] = analytics.get(field, 0) + value
+    logger.info("LLM usage", extra={"call": call, "model": model, **counts})
+
+
+async def _finish_stream(stream: object, analytics: dict | None, *, call: str, model: str, turn_id: str) -> None:
+    """Record usage for a finished stream and warn if the reply was cut off."""
+    try:
+        final = await stream.get_final_message()  # type: ignore[attr-defined]
+    except Exception:
+        logger.debug("Could not read final stream message", exc_info=True)
+        return
+    _record_usage(analytics, final, call=call, model=model)
+    if getattr(final, "stop_reason", None) == "max_tokens":
+        logger.warning("NPC reply was cut off at max_tokens", extra={"turn_id": turn_id, "call": call})
 
 
 def _get_client() -> anthropic.AsyncAnthropic:
@@ -206,6 +247,9 @@ async def _flush_connection_analytics(session_id: str, analytics: dict) -> None:
             scene_analytics["check_total_count"] = (
                 scene_analytics.get("check_total_count", 0) + analytics["check_total_count"]
             )
+            for field in _USAGE_FIELDS:
+                if analytics.get(field):
+                    scene_analytics[field] = scene_analytics.get(field, 0) + analytics[field]
 
             # Compute average turn latency from this connection
             if analytics["turn_count"] > 0:
@@ -407,7 +451,9 @@ async def dialogue_ws(ws: WebSocket) -> None:
             in_flight = True
             try:
                 if msg_type == "quickchat_turn":
-                    await _handle_quickchat(ws, msg, history, player_id, client, world_id=world_id)
+                    await _handle_quickchat(
+                        ws, msg, history, player_id, client, world_id=world_id, analytics=connection_analytics
+                    )
                 elif msg_type == "rp_turn":
                     await _handle_rp_turn(
                         ws,
@@ -497,6 +543,7 @@ async def _handle_quickchat(
     client: anthropic.AsyncAnthropic,
     *,
     world_id: str = "",
+    analytics: dict | None = None,
 ) -> None:
     npc_id = msg.get("npc_id")
     player_input = msg.get("text", "").strip()
@@ -550,7 +597,7 @@ async def _handle_quickchat(
     full_response = ""
     try:
         async with client.messages.stream(
-            model=_MODEL,
+            model=_model(),
             max_tokens=400,
             system=system_prompt,
             messages=_trim_history(history),
@@ -558,6 +605,10 @@ async def _handle_quickchat(
             async for text in stream.text_stream:
                 full_response += text
                 await ws.send_json({"type": "stream_chunk", "turn_id": ws_turn_id, "text": text})
+            await _finish_stream(stream, analytics, call="quickchat", model=_model(), turn_id=ws_turn_id)
+        if analytics is not None:
+            analytics["llm_call_count"] += 1
+            analytics["turn_count"] += 1
 
         history.append({"role": "assistant", "content": full_response})
         await ws.send_json(
@@ -724,22 +775,24 @@ async def _handle_rp_turn(
         if turn_id:
             await update_stage(turn_id, "analysis")
 
+        fast = settings.rp_fast_analysis
         analysis_messages = build_analysis_messages(
-            player_prose, _trim_history(history[:-1]), game_context=game_context
+            player_prose, _trim_history(history[:-1]), game_context=game_context, fast=fast
         )
 
         analysis_response = await client.messages.create(
-            model=_MODEL,
-            max_tokens=1200,
+            model=_analysis_model(),
+            max_tokens=500 if fast else 1200,
             system=system_prompt,
             messages=analysis_messages,
-            tools=[_ANALYSIS_TOOL],
+            tools=[_ANALYSIS_TOOL_FAST if fast else _ANALYSIS_TOOL],
             tool_choice={"type": "tool", "name": "scene_analysis"},
         )
 
         # (#R4) Track LLM call
         if analytics is not None:
             analytics["llm_call_count"] += 1
+        _record_usage(analytics, analysis_response, call="analysis", model=_analysis_model())
 
         analysis = _extract_tool_result(analysis_response)
         if analysis is None:
@@ -1165,7 +1218,8 @@ async def _resolve_and_finish_rp(
         )
 
     # === CALL 2: Final prose with check results ===
-    draft = analysis.get("draft_response", "")
+    # In the fast flow there is no draft; ignore one even if the model sent it.
+    draft = "" if settings.rp_fast_analysis else analysis.get("draft_response", "")
     # (#R10) Include passive hints in final prose call
     # The relay decides which secrets this turn unlocks (invariant #8).
     secrets_now = unlocked_secrets(npc, check_results, relationship_score=relationship_score, flags=story_flags)
@@ -1181,7 +1235,7 @@ async def _resolve_and_finish_rp(
 
     full_response = ""
     async with client.messages.stream(
-        model=_MODEL,
+        model=_model(),
         max_tokens=800,
         system=system_prompt,
         messages=final_messages,
@@ -1189,6 +1243,7 @@ async def _resolve_and_finish_rp(
         async for text in stream.text_stream:
             full_response += text
             await ws.send_json({"type": "stream_chunk", "turn_id": ws_turn_id, "text": text})
+        await _finish_stream(stream, analytics, call="reply", model=_model(), turn_id=ws_turn_id)
 
     # (#R4) Track second LLM call
     if analytics is not None:
@@ -1385,6 +1440,11 @@ _ANALYSIS_TOOL: dict = {
         "required": ["checks", "scene_changes", "animation_directives", "draft_response"],
     },
 }
+
+# Fast flow (INKGLASS_RP_FAST_ANALYSIS): same tool without the draft reply.
+_ANALYSIS_TOOL_FAST: dict = copy.deepcopy(_ANALYSIS_TOOL)
+del _ANALYSIS_TOOL_FAST["input_schema"]["properties"]["draft_response"]
+_ANALYSIS_TOOL_FAST["input_schema"]["required"].remove("draft_response")
 
 
 def _extract_tool_result(response) -> dict | None:

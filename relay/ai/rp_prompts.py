@@ -197,11 +197,27 @@ RULES FOR ANALYSIS:
 """
 
 
+_DRAFT_FIELD_LINE = (
+    '  "draft_response": "<your in-character prose response, written as if no checks exist -- '
+    'the final version will incorporate check results>",\n'
+)
+_DRAFT_RULE_LINE = "- draft_response is full prose -- it will be refined in the second call with check results.\n"
+assert _DRAFT_FIELD_LINE in ANALYSIS_INSTRUCTION and _DRAFT_RULE_LINE in ANALYSIS_INSTRUCTION
+
+# Fast flow: the analysis decides checks and scene changes only; the reply is
+# written once, in the streamed call that follows.
+ANALYSIS_INSTRUCTION_FAST = ANALYSIS_INSTRUCTION.replace(_DRAFT_FIELD_LINE, "").replace(
+    _DRAFT_RULE_LINE,
+    "- Do not write the NPC's reply here. It is written in the next step, after any checks are resolved.\n",
+)
+
+
 def build_analysis_messages(
     player_prose: str,
     history: list[dict[str, str]],
     *,
     game_context: GameStateContext | None = None,
+    fast: bool = False,
 ) -> list[dict[str, str]]:
     """Build the message list for the first LLM call (structured analysis).
 
@@ -220,7 +236,8 @@ def build_analysis_messages(
     messages.append(
         {
             "role": "user",
-            "content": f"{scene_prefix}{player_prose}\n\n---\n{ANALYSIS_INSTRUCTION}",
+            "content": f"{scene_prefix}{player_prose}\n\n---\n"
+            f"{ANALYSIS_INSTRUCTION_FAST if fast else ANALYSIS_INSTRUCTION}",
         }
     )
     return messages
@@ -299,7 +316,21 @@ CONTEXT FROM EARLIER IN THIS SESSION (what you remember):
         memory_section = ""
 
     # Assemble the instruction
-    if check_results:
+    if not draft_response:
+        # Fast flow: there is no draft; this call writes the reply once.
+        outcome_rules = (
+            """- If a check passed, the action succeeds. Describe the success.
+- If a check failed, the action doesn't fully succeed. Describe the failure or partial success in character.
+- Do NOT mention dice, DCs, or game mechanics in your prose.
+"""
+            if check_results
+            else ""
+        )
+        instruction = f"""{memory_section}The player wrote:
+{player_prose}
+{checks_section}{passive_section}Write your in-character prose response.
+{outcome_rules}"""
+    elif check_results:
         instruction = f"""{memory_section}The player wrote:
 {player_prose}
 

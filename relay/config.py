@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     admin_mode: bool = Field(default=False, alias="ADMIN_MODE")
     environment: Literal["development", "staging", "production"] = Field(default="development", alias="ENVIRONMENT")
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(default="INFO", alias="LOG_LEVEL")
+    # Model that writes NPC replies. The analysis call uses a forced tool call,
+    # which some newer models reject; check before changing (see .env.example).
+    model: str = Field(default="claude-sonnet-4-6", alias="INKGLASS_MODEL")
+    # Model for the RP analysis call. Empty means the same as INKGLASS_MODEL.
+    analysis_model: str = Field(default="", alias="INKGLASS_ANALYSIS_MODEL")
+    # When true, the analysis call does not draft the reply, so the reply starts
+    # streaming sooner and is written once instead of twice.
+    rp_fast_analysis: bool = Field(default=False, alias="INKGLASS_RP_FAST_ANALYSIS")
 
     @model_validator(mode="after")
     def _check_required_secrets(self) -> Settings:

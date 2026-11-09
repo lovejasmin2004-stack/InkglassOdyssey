@@ -922,6 +922,104 @@ class TestWorldMutationLimits:
         assert flags == []
 
 
+def _usage(inp: int, out: int, read: int = 0, created: int = 0) -> SimpleNamespace:
+    return SimpleNamespace(
+        input_tokens=inp, output_tokens=out, cache_read_input_tokens=read, cache_creation_input_tokens=created
+    )
+
+
+class TestTurnFlowSettings:
+    """Model choice, the fast analysis flow, and token usage recording."""
+
+    def _run(self, monkeypatch, *, fast: bool, checks: list | None = None):
+        import relay.config as _config
+        from relay.endpoints import dialogue
+
+        monkeypatch.setattr(_config.settings, "rp_fast_analysis", fast)
+        monkeypatch.setattr(_config.settings, "model", "reply-model")
+        monkeypatch.setattr(_config.settings, "analysis_model", "analysis-model")
+        recorded: list[dict] = []
+        real_record = dialogue._record_usage
+
+        def _spy(analytics, response, *, call, model):
+            real_record(analytics, response, call=call, model=model)
+            if analytics is not None:
+                recorded.append(dict(analytics))
+
+        monkeypatch.setattr(dialogue, "_record_usage", _spy)
+
+        analysis = _mock_analysis_response(checks=checks)
+        analysis.usage = _usage(1000, 200, read=800)
+        stream_cm = _mock_stream_context("She nods.")
+        stream_cm.__aenter__.return_value.get_final_message = AsyncMock(
+            return_value=SimpleNamespace(usage=_usage(900, 150, created=700), stop_reason="end_turn")
+        )
+        mock_client = MagicMock()
+        mock_client.messages.create = AsyncMock(return_value=analysis)
+        mock_client.messages.stream = MagicMock(return_value=stream_cm)
+        with (
+            patch("relay.endpoints.dialogue.mark_stale_turns", return_value=0),
+            patch("relay.endpoints.dialogue.get_pending_turns", return_value=[]),
+            patch("relay.endpoints.dialogue.load_npc", return_value=_make_npc()),
+            patch("relay.endpoints.dialogue._get_client", return_value=mock_client),
+        ):
+            with TestClient(app, raise_server_exceptions=False) as client:
+                with client.websocket_connect("/dialogue") as ws:
+                    ws.send_text(_auth_msg(_session_token(mode="multiplayer")))
+                    ws.send_text(json.dumps({"type": "rp_turn", "npc_id": "test_npc", "text": "Hello there."}))
+                    msgs = _recv_all(ws, until_type="stream_end")
+        assert any(m["type"] == "stream_end" for m in msgs), msgs
+        return mock_client, recorded
+
+    def test_default_flow_drafts_then_refines(self, monkeypatch) -> None:
+        client, _ = self._run(monkeypatch, fast=False)
+        analysis_call = client.messages.create.call_args.kwargs
+        assert analysis_call["model"] == "analysis-model"
+        assert "draft_response" in analysis_call["tools"][0]["input_schema"]["properties"]
+        assert "draft_response" in analysis_call["messages"][-1]["content"]
+        reply_call = client.messages.stream.call_args.kwargs
+        assert reply_call["model"] == "reply-model"
+        assert "Your draft response was" in reply_call["messages"][-1]["content"]
+
+    def test_fast_flow_writes_the_reply_once(self, monkeypatch) -> None:
+        client, _ = self._run(monkeypatch, fast=True)
+        analysis_call = client.messages.create.call_args.kwargs
+        assert "draft_response" not in analysis_call["tools"][0]["input_schema"]["properties"]
+        assert "draft_response" not in analysis_call["tools"][0]["input_schema"]["required"]
+        assert "draft_response" not in analysis_call["messages"][-1]["content"]
+        assert analysis_call["max_tokens"] < 1200
+        final_prompt = client.messages.stream.call_args.kwargs["messages"][-1]["content"]
+        assert "draft" not in final_prompt.lower()
+        assert "Hello there." in final_prompt
+        assert "Write your in-character prose response." in final_prompt
+
+    def test_fast_flow_still_passes_check_results(self, monkeypatch) -> None:
+        client, _ = self._run(monkeypatch, fast=True, checks=[{"skill": "insight", "dc": 12, "reason": "Reading her"}])
+        final_prompt = client.messages.stream.call_args.kwargs["messages"][-1]["content"]
+        assert "insight check (DC 12)" in final_prompt
+        assert "Do NOT mention dice" in final_prompt
+
+    def test_token_usage_is_recorded_for_both_calls(self, monkeypatch) -> None:
+        _, recorded = self._run(monkeypatch, fast=False)
+        totals = recorded[-1]
+        assert totals["input_tokens"] == 1900
+        assert totals["output_tokens"] == 350
+        assert totals["cache_read_input_tokens"] == 800
+        assert totals["cache_creation_input_tokens"] == 700
+
+    def test_model_defaults(self) -> None:
+        from relay.config import Settings
+        from relay.endpoints.dialogue import _ANALYSIS_TOOL, _ANALYSIS_TOOL_FAST
+
+        defaults = Settings(_env_file=None, INKGLASS_JWT_SECRET="s")
+        assert defaults.model == "claude-sonnet-4-6"
+        assert defaults.analysis_model == ""
+        assert defaults.rp_fast_analysis is False
+        # The fast tool is a copy: building it must not strip the draft from the default tool.
+        assert "draft_response" in _ANALYSIS_TOOL["input_schema"]["required"]
+        assert "draft_response" not in _ANALYSIS_TOOL_FAST["input_schema"]["required"]
+
+
 # ---------------------------------------------------------------------------
 # Scene validation and turn-in-progress guard
 # ---------------------------------------------------------------------------
