@@ -8,16 +8,17 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relay.auth.middleware import get_current_token
 from relay.auth.tokens import AccountTokenPayload, SessionTokenPayload
+from relay.config import settings
 from relay.database import get_db
 from relay.economy.wallet import credit
-from relay.endpoints._helpers import load_character_owned
+from relay.endpoints._helpers import load_character_any, load_character_owned
 from relay.models import TransactionLog
 
 logger = logging.getLogger(__name__)
@@ -101,15 +102,19 @@ async def get_wallet(character_id: str, token: Token, db: DB) -> WalletResponse:
 
 @router.post("/grant", status_code=status.HTTP_200_OK, response_model=GrantResponse)
 async def grant_currency(body: GrantRequest, token: Token, db: DB) -> GrantResponse:
-    """Grant currency to a character (admin/quest reward operation).
+    """Grant currency to a character. DM or admin only.
 
-    TODO(Phase 1): Add role-based access control.  Currently, the ownership
-    check restricts grants to the character's own player.  DM (role="dm") and
-    admin tokens should bypass ownership so they can grant rewards to other
-    players' characters.  Until then, DM grants require the player to
-    self-grant through their own session token.
+    A player cannot grant currency to themselves: grants come from a DM's
+    session (role "dm"), who may reward any character, or from admin tooling
+    with ADMIN_MODE on. Quest and shop income go through their own code paths.
     """
-    character = await load_character_owned(db, body.character_id, token.player_id)
+    is_dm = isinstance(token, SessionTokenPayload) and token.role == "dm"
+    if not is_dm and not settings.admin_mode:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "forbidden", "message": "Only a DM or an admin can grant currency"},
+        )
+    character = await load_character_any(db, body.character_id)
 
     new_balance = await credit(
         db,

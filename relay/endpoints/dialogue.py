@@ -119,10 +119,15 @@ def _get_client() -> anthropic.AsyncAnthropic:
 
 
 def _trim_history(history: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Return the last _MAX_HISTORY_MESSAGES entries for LLM context."""
-    if len(history) <= _MAX_HISTORY_MESSAGES:
-        return list(history)
-    return list(history[-_MAX_HISTORY_MESSAGES:])
+    """Return the last _MAX_HISTORY_MESSAGES entries for LLM context.
+
+    The Messages API requires the first message to be from the user, so a
+    window that would open on an NPC reply drops that reply.
+    """
+    window = list(history[-_MAX_HISTORY_MESSAGES:])
+    while window and window[0]["role"] != "user":
+        window.pop(0)
+    return window
 
 
 def _build_npc_memory_summary(history: list[dict[str, str]]) -> str | None:

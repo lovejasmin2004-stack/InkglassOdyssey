@@ -6,6 +6,7 @@ verifies wallet changes match expected values from the design doc.
 
 from __future__ import annotations
 
+from typing import ClassVar
 from unittest.mock import patch
 
 import pytest
@@ -400,14 +401,35 @@ class TestWalletEndpoints:
         assert resp.status_code == 200
         assert resp.json()["balance_after"] == 150
 
-    def test_grant_wrong_player(self, db_client, character_id):
-        other_token = create_account_token(player_id="player_999", tier=1)
+    _GRANT: ClassVar[dict] = {"currency": "inkglass_dark", "amount": 100}
+
+    def test_player_cannot_grant_to_themselves(self, db_client, auth_header, session_header, character_id, monkeypatch):
+        """Outside admin mode, a player's own token cannot mint currency (Invariant #14)."""
+        import relay.config as _config
+
+        monkeypatch.setattr(_config.settings, "admin_mode", False)
+        for header in (auth_header, session_header):
+            resp = db_client.post("/wallet/grant", json={"character_id": character_id, **self._GRANT}, headers=header)
+            assert resp.status_code == 403
+            assert resp.json()["code"] == "forbidden"
+        balance = db_client.get(f"/wallet/{character_id}", headers=auth_header).json()
+        assert sum(balance["balances"].values()) == 0
+
+    def test_dm_can_grant_to_another_players_character(self, db_client, character_id, monkeypatch):
+        import relay.config as _config
+        from relay.auth.tokens import create_session_token
+
+        monkeypatch.setattr(_config.settings, "admin_mode", False)
+        dm_token = create_session_token(
+            player_id="player_dm", world_id="inkglass_dark", session_id="sess_dm", tier=1, role="dm", mode="multiplayer"
+        )
         resp = db_client.post(
             "/wallet/grant",
-            json={"character_id": character_id, "currency": "inkglass_dark", "amount": 100},
-            headers={"Authorization": f"Bearer {other_token}"},
+            json={"character_id": character_id, **self._GRANT},
+            headers={"Authorization": f"Bearer {dm_token}"},
         )
-        assert resp.status_code == 403
+        assert resp.status_code == 200
+        assert resp.json()["balance_after"] == 100
 
     def test_transaction_log(self, db_client, auth_header, character_id):
         # Grant some currency to create transactions

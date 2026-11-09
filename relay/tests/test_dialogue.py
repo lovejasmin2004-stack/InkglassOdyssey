@@ -1090,6 +1090,20 @@ class TestTrimHistory:
         assert result[0]["content"] == f"msg {100 - _MAX_HISTORY_MESSAGES}"
         assert result[-1]["content"] == "msg 99"
 
+    def test_window_never_opens_on_an_npc_reply(self):
+        """Quick-chat sends an odd-length history; from the 21st exchange the raw window began with the NPC."""
+        from relay.endpoints.dialogue import _MAX_HISTORY_MESSAGES, _trim_history
+
+        for exchanges in (19, 20, 21, 30):
+            history = []
+            for i in range(exchanges):
+                history += [{"role": "user", "content": f"u{i}"}, {"role": "assistant", "content": f"a{i}"}]
+            history.append({"role": "user", "content": "new"})
+            window = _trim_history(history)
+            assert window[0]["role"] == "user"
+            assert window[-1]["content"] == "new"
+            assert len(window) <= _MAX_HISTORY_MESSAGES
+
     def test_trim_returns_copy(self):
         from relay.endpoints.dialogue import _trim_history
 
