@@ -53,6 +53,13 @@ def handle_incapacitation(
     companion["hp_current"] = 0
     companion["active"] = False
 
+    confrontation = check_confrontation_threshold(companion, companion_data)
+    if confrontation:
+        logger.warning(
+            "Confrontation threshold reached",
+            extra={"npc_id": npc_id, "loyalty_strain": new_strain},
+        )
+
     logger.info(
         "Companion incapacitated",
         extra={
@@ -69,7 +76,9 @@ def handle_incapacitation(
         "relationship_old": rel_change["old"],
         "relationship_new": rel_change["new"],
         "loyalty_strain": new_strain,
-        "confrontation_triggered": check_confrontation_threshold(companion, companion_data),
+        "confrontation_triggered": confrontation,
+        # TODO(phase-3): wire confrontation_scene_id to scenario system
+        "confrontation_scene_id": companion_data.get("confrontation_scene_id") if confrontation else None,
     }
 
 

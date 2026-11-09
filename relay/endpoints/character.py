@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import uuid
-from collections import OrderedDict
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -177,47 +173,11 @@ def _ability_modifier(score: int) -> int:
     return (score - 10) // 2
 
 
-_MAX_WORLD_CONFIG_CACHE = 16
-_world_config_cache: OrderedDict[str, dict] = OrderedDict()
-_world_config_lock = asyncio.Lock()
-
-
-def _read_world_config(config_path: Path) -> dict:
-    """Blocking I/O — run via to_thread."""
-    return json.loads(config_path.read_text(encoding="utf-8"))
-
-
 async def _load_world_config(world_id: str) -> dict | None:
-    """Load and cache world config from disk."""
-    async with _world_config_lock:
-        if world_id in _world_config_cache:
-            _world_config_cache.move_to_end(world_id)
-            return _world_config_cache[world_id]
+    """Delegate to shared world config loader."""
+    from relay.endpoints._helpers import load_world_config
 
-    config_path = Path(__file__).parents[2] / "regions" / world_id / "world_config.json"
-    if not config_path.exists():
-        config_path = Path(__file__).parents[2] / "worlds" / f"{world_id}.json"
-    if not config_path.exists():
-        logger.warning(
-            "World config not found",
-            extra={"world_id": world_id, "searched": ["regions/", "worlds/"]},
-        )
-        return None
-
-    try:
-        config = await asyncio.to_thread(_read_world_config, config_path)
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.error(
-            "Failed to load world config",
-            extra={"world_id": world_id, "path": str(config_path), "error": str(exc)},
-        )
-        return None
-
-    async with _world_config_lock:
-        _world_config_cache[world_id] = config
-        while len(_world_config_cache) > _MAX_WORLD_CONFIG_CACHE:
-            _world_config_cache.popitem(last=False)
-    return config
+    return await load_world_config(world_id)
 
 
 async def _get_hit_die(world_id: str, specialisation_path_id: str) -> int:

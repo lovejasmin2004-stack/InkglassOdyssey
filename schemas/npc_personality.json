@@ -667,11 +667,29 @@
                         },
                         "abilities": {
                             "type": "array",
-                            "items": {
-                                "type": "string"
-                            },
                             "minItems": 2,
-                            "maxItems": 3
+                            "maxItems": 3,
+                            "items": {
+                                "type": "object",
+                                "required": [
+                                    "name"
+                                ],
+                                "additionalProperties": false,
+                                "properties": {
+                                    "name": {
+                                        "type": "string",
+                                        "minLength": 1
+                                    },
+                                    "damage_dice": {
+                                        "type": "string",
+                                        "pattern": "^\\d+d\\d+([+-]\\d+)?$|^[+-]?\\d+$"
+                                    },
+                                    "healing_dice": {
+                                        "type": "string",
+                                        "pattern": "^\\d+d\\d+([+-]\\d+)?$|^[+-]?\\d+$"
+                                    }
+                                }
+                            }
                         },
                         "directive_vocabulary": {
                             "type": "object",
@@ -720,6 +738,9 @@
                 },
                 "dismissal_relationship_modifier": {
                     "type": "integer"
+                },
+                "confrontation_scene_id": {
+                    "type": "string"
                 }
             },
             "x-group": "system"

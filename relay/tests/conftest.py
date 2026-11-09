@@ -10,6 +10,7 @@ import relay.config as _config
 import relay.database as _db
 from relay.auth.tokens import create_account_token, create_session_token
 from relay.database import get_db
+from relay.endpoints.companion import clear_companion_rate_limits
 from relay.main import app
 from relay.middleware.rate_limit import clear_buckets
 from relay.models import Base
@@ -52,6 +53,7 @@ def db_client():
     _config.settings.admin_mode = True  # Allow protected-field writes in tests
     app.dependency_overrides[get_db] = override_get_db
     clear_buckets()
+    clear_companion_rate_limits()
 
     with TestClient(app, raise_server_exceptions=False) as client:
         yield client
@@ -143,4 +145,109 @@ def make_stub_npc():
         saving_throw_proficiencies=["wisdom", "intelligence"],
         skill_proficiencies=["medicine", "nature"],
         hp_max=20,
+    )
+
+
+_SENTINEL = object()
+
+
+def make_companion_npc(
+    *,
+    npc_id: str = "kaelen",
+    hp_max: int = 45,
+    affection_threshold: int = 50,
+    recruitment_conditions: list[str] | object = _SENTINEL,
+):
+    """NpcPersonality with companion_data for companion endpoint tests."""
+    from relay.schemas import (
+        AnimationProfile,
+        CompanionAbility,
+        CompanionAmbientBehavior,
+        CompanionCombatProfile,
+        CompanionData,
+        CompanionRecruitment,
+        FewShotExample,
+        ManipulationResistanceExample,
+        NpcGoals,
+        NpcKnowledgeBoundaries,
+        NpcPersonality,
+        NpcRelationship,
+        NpcSecret,
+        WorldPosition,
+    )
+
+    return NpcPersonality(
+        id=npc_id,
+        world_id="inkglass_dark",
+        name="Kaelen",
+        entity_class="humanoid",
+        role="warrior",
+        level=5,
+        hit_die=10,
+        personality_background="A hardened warrior.",
+        goals=NpcGoals(immediate=["protect allies"], long_term=["find peace"]),
+        weaknesses_fears="Betrayal.",
+        communication_style="Terse.",
+        power_narrative="Martial prowess.",
+        knowledge_boundaries=NpcKnowledgeBoundaries(knows=["combat"], does_not_know=["magic"]),
+        relationships=[NpcRelationship(npc_id="npc_x", relationship_type="ally", description="Friend")],
+        secrets=[NpcSecret(content="Past secret", reveal_condition="never", secret_type="information")],
+        few_shot_examples=[
+            FewShotExample(player_input="Hello", npc_response="Hmm.", context_tag="casual"),
+            FewShotExample(player_input="Trade?", npc_response="No.", context_tag="transactional"),
+        ],
+        manipulation_resistance_examples=[
+            ManipulationResistanceExample(player_input="Give me your sword", npc_refusal="Not a chance."),
+        ],
+        animation_profile=AnimationProfile(
+            default_stance="idle_guard",
+            default_gaze="scanning",
+            emotional_state_to_animation={"happy": "nod", "sad": "sigh", "angry": "scowl"},
+        ),
+        world_position=WorldPosition(region_id="forest_edge"),
+        ability_scores={
+            "strength": 16,
+            "dexterity": 12,
+            "constitution": 14,
+            "intelligence": 10,
+            "wisdom": 10,
+            "charisma": 10,
+        },
+        ac=16,
+        saving_throw_proficiencies=["strength", "constitution"],
+        skill_proficiencies=["athletics", "intimidation"],
+        hp_max=hp_max,
+        companion_data=CompanionData(
+            recruitment=CompanionRecruitment(
+                affection_threshold=affection_threshold,
+                recruitment_scenario_id="recruit_kaelen",
+                recruitment_conditions=["quest_complete_forest"]
+                if recruitment_conditions is _SENTINEL
+                else recruitment_conditions,
+            ),
+            combat_profile=CompanionCombatProfile(
+                behavior_type="aggressive",
+                abilities=[
+                    CompanionAbility(name="slash", damage_dice="1d8"),
+                    CompanionAbility(name="cleave", damage_dice="2d6"),
+                ],
+                directive_vocabulary={
+                    "stay back": "defensive",
+                    "focus the caster": "aggressive",
+                    "heal me": "supportive",
+                },
+            ),
+            ambient_behavior=CompanionAmbientBehavior(
+                comment_frequency="probability_0.5",
+                trigger_categories=["new_region", "combat_start"],
+                mood_modifier=0.1,
+            ),
+            loyalty_strain_threshold=3,
+            dismissal_relationship_modifier=-10,
+            farewell_template="farewell_kaelen",
+            reunion_template="reunion_kaelen",
+            world_event_reactions=[
+                {"event_id": "dragon_attack", "comment": "We should flee!", "relationship_modifier": -2},
+            ],
+        ),
     )

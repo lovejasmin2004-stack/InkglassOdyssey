@@ -5,6 +5,10 @@ Each companion gets one action per combat turn, chosen by behavior_type:
   supportive  → heal the lowest-HP ally
   defensive   → protect action (interpose, draw aggression)
 
+Note: This module is intentionally stateless — it resolves dice rolls and
+returns an action result dict.  The combat system (relay/combat/) is
+responsible for applying the results (damage, healing) to game state.
+
 Design doc: docs/companion system.pdf §Combat Profile
 """
 
@@ -13,6 +17,7 @@ from __future__ import annotations
 import logging
 
 from relay.checks.resolver import ability_modifier, proficiency_bonus, roll_d20
+from relay.combat.damage import parse_formula
 from relay.combat.resolver import roll_dice
 
 logger = logging.getLogger(__name__)
@@ -151,27 +156,42 @@ def _defensive_action(
     }
 
 
+def _valid_dice(notation: str) -> bool:
+    """Return True if *notation* is a valid dice formula (NdM, NdM+K, flat K)."""
+    try:
+        parse_formula(notation)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
 def _pick_damage_dice(abilities: list) -> str:
     """Extract damage dice from the first attack ability, default 1d6.
 
-    (#3) Parses abilities that are dicts with a ``damage_dice`` key.
-    Falls back to 1d6 if no ability provides dice or abilities are strings.
+    Parses abilities that are dicts with a ``damage_dice`` key.
+    Falls back to 1d6 if no ability provides valid dice.
     """
     for ability in abilities:
         if isinstance(ability, dict) and "damage_dice" in ability:
-            return ability["damage_dice"]
+            dice = ability["damage_dice"]
+            if _valid_dice(dice):
+                return dice
+            logger.warning("Invalid damage_dice notation %r, skipping", dice)
     return "1d6"
 
 
 def _pick_healing_dice(abilities: list) -> str:
     """Extract healing dice from the first healing ability, default 1d8.
 
-    (#3) Parses abilities that are dicts with a ``healing_dice`` key.
-    Falls back to 1d8 if no ability provides dice or abilities are strings.
+    Parses abilities that are dicts with a ``healing_dice`` key.
+    Falls back to 1d8 if no ability provides valid dice.
     """
     for ability in abilities:
         if isinstance(ability, dict) and "healing_dice" in ability:
-            return ability["healing_dice"]
+            dice = ability["healing_dice"]
+            if _valid_dice(dice):
+                return dice
+            logger.warning("Invalid healing_dice notation %r, skipping", dice)
     return "1d8"
 
 
