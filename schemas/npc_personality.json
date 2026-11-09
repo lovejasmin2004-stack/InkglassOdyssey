@@ -251,7 +251,7 @@
                     },
                     "reveal_quest_flag": {
                         "type": "string",
-                        "description": "For quest_flag: the flag that unlocks it."
+                        "description": "For quest_flag: the flag that unlocks it. The AI cannot set this flag unless it is also listed under Story Flags."
                     },
                     "reveal_check_type": {
                         "type": "string",
@@ -266,6 +266,31 @@
             "minItems": 1,
             "x-group": "knowledge",
             "description": "What they hide. The AI always knows these and keeps them hidden; on a turn where the reveal condition is met, the relay tells it that it may reveal one. Sent to the AI every turn."
+        },
+        "story_flags": {
+            "type": "array",
+            "description": "Story flags the AI is allowed to set while speaking as this NPC. It can set no others (apart from the crime flags the consequence system defines). List a flag here only if the AI noticing the moment should be enough to set it; a flag that guards a secret or a recruitment should usually be set by a quest or the DM instead. Sent to the AI every turn in RP mode.",
+            "x-group": "knowledge",
+            "items": {
+                "type": "object",
+                "required": [
+                    "flag",
+                    "set_when"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "flag": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$",
+                        "description": "The flag's ID, lower-case snake_case."
+                    },
+                    "set_when": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "What must clearly have happened in the scene for the AI to set it."
+                    }
+                }
+            }
         },
         "few_shot_examples": {
             "type": "array",

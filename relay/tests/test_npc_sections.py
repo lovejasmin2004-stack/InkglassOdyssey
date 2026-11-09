@@ -121,3 +121,29 @@ class TestSchemaMirror:
     def test_knowledge_boundary_fields_match(self) -> None:
         props = _SCHEMA["properties"]["knowledge_boundaries"]["properties"]
         assert set(props) == set(NpcKnowledgeBoundaries.model_fields)
+
+
+class TestAnalysisReference:
+    """The RP prompt tells the model the ids and limits the relay enforces."""
+
+    def test_lists_story_flags_region_and_faction(self) -> None:
+        from relay.schemas import NpcStoryFlag
+
+        npc = _npc(
+            faction_id="merchant_guild",
+            story_flags=[NpcStoryFlag(flag="heard_the_bell", set_when="The player hears the tower bell.")],
+        )
+        prompt = build_rp_system_prompt(npc)[0]["text"]
+        assert "ANALYSIS REFERENCE" in prompt
+        assert "Your faction id is merchant_guild" in prompt
+        assert "wanted_in:market_district" in prompt
+        assert "heard_the_bell: The player hears the tower bell." in prompt
+        assert prompt.index("ANALYSIS REFERENCE") < prompt.index("RULES")
+
+    def test_without_story_flags_or_faction(self) -> None:
+        prompt = build_rp_system_prompt(_npc())[0]["text"]
+        assert "You belong to no faction" in prompt
+        assert "You may set no story flags" in prompt
+
+    def test_quickchat_prompt_has_no_analysis_reference(self) -> None:
+        assert "ANALYSIS REFERENCE" not in build_quickchat_system_prompt(_npc())

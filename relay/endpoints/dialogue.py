@@ -57,7 +57,14 @@ from relay.ai.rp_prompts import (
 from relay.auth.tokens import SessionTokenPayload, decode_token
 from relay.checks.resolver import evaluate_passive_checks, resolve_check, validate_checks_batch
 from relay.config import settings
-from relay.consequences.evaluator import apply_world_mutations, validate_world_mutations
+from relay.consequences.evaluator import (
+    MAX_NEGATIVE_DELTA,
+    MAX_POSITIVE_DELTA_PER_TURN,
+    apply_session_gain_caps,
+    apply_world_mutations,
+    constrain_world_mutations,
+    validate_world_mutations,
+)
 from relay.consequences.profiles import filter_mutations_by_profile, resolve_profile
 from relay.models import Character
 from relay.narrative.threads import upsert_thread, validate_narrative_signals
@@ -1080,8 +1087,20 @@ async def _resolve_and_finish_rp(
         # §8: Filter mutations based on NPC's consequence profile
         npc_profile = resolve_profile(getattr(npc, "consequence_profile", None))
         validated_mutations = filter_mutations_by_profile(validated_mutations, npc_profile)
+        # The LLM may only touch this NPC, real factions, and listed story flags.
+        scene_factions = await load_faction_registry(world_id) if world_id else None
+        validated_mutations = constrain_world_mutations(
+            validated_mutations,
+            npc_id=npc_id,
+            npc_faction_id=getattr(npc, "faction_id", None),
+            faction_registry=scene_factions,
+            allowed_flags={sf.flag for sf in (getattr(npc, "story_flags", None) or [])},
+        )
         if validated_mutations:
             async with _db.AsyncSessionLocal() as mutation_db:
+                validated_mutations = await apply_session_gain_caps(
+                    mutation_db, character_id, session_id or None, validated_mutations
+                )
                 # Load character's faction_standing and relationships from DB
                 char_result = await mutation_db.execute(select(Character).where(Character.id == character_id))
                 char = char_result.scalar_one_or_none()
@@ -1096,9 +1115,7 @@ async def _resolve_and_finish_rp(
                     faction_standing = dict(char.faction_standing or {})
                     relationships = dict(char.relationships or {})
 
-                    # Load faction definitions for propagation
-                    if world_id:
-                        faction_registry = await load_faction_registry(world_id)
+                    faction_registry = scene_factions
 
                 mutation_report = await apply_world_mutations(
                     mutation_db,
@@ -1342,17 +1359,17 @@ _ANALYSIS_TOOL: dict = {
                         },
                         "npc_id": {
                             "type": "string",
-                            "description": "Required for relationship_change.",
+                            "description": "Ignored: relationship_change always applies to the NPC in this scene.",
                         },
                         "flag": {
                             "type": "string",
-                            "description": "Required for world_flag_set.",
+                            "description": "Required for world_flag_set. Only wanted_in/bounty or a listed story flag.",
                         },
                         "delta": {
                             "type": "integer",
-                            "minimum": -50,
-                            "maximum": 50,
-                            "description": "Signed change for faction or relationship.",
+                            "minimum": -MAX_NEGATIVE_DELTA,
+                            "maximum": MAX_POSITIVE_DELTA_PER_TURN,
+                            "description": "Signed change for faction or relationship. Gains are small.",
                         },
                         "reason": {"type": "string"},
                     },

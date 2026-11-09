@@ -12,9 +12,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from relay.consequences.evaluator import (
-    _MAX_MUTATION_DELTA,
     _MAX_MUTATIONS_PER_TURN,
+    MAX_NEGATIVE_DELTA,
+    MAX_POSITIVE_DELTA_PER_TURN,
+    MAX_POSITIVE_FACTION_PER_SESSION,
+    MAX_POSITIVE_RELATIONSHIP_PER_SESSION,
+    apply_session_gain_caps,
     apply_world_mutations,
+    constrain_world_mutations,
     validate_world_mutations,
 )
 from relay.models import Account, Base, Character, StateChangeLog
@@ -50,6 +55,117 @@ async def db():
         yield session
 
     await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Scene constraints: what the LLM is entitled to change in this scene
+# ---------------------------------------------------------------------------
+
+_REGISTRY = {"merchant_guild": {}, "knights": {}}
+
+
+def _constrain(mutations, **kw):
+    defaults = {
+        "npc_id": "halvric",
+        "npc_faction_id": "merchant_guild",
+        "faction_registry": _REGISTRY,
+        "allowed_flags": {"heard_the_bell"},
+    }
+    return constrain_world_mutations(mutations, **{**defaults, **kw})
+
+
+def _rel(delta, npc_id=""):
+    return {"type": "relationship_change", "npc_id": npc_id, "delta": delta, "reason": "r"}
+
+
+def _fac(faction_id, delta):
+    return {"type": "faction_standing_change", "faction_id": faction_id, "delta": delta, "reason": "r"}
+
+
+def _flag(flag):
+    return {"type": "world_flag_set", "flag": flag, "reason": "r"}
+
+
+class TestConstrainWorldMutations:
+    def test_relationship_always_targets_the_npc_in_the_scene(self):
+        assert _constrain([_rel(3, "some_other_npc")]) == [_rel(3, "halvric")]
+
+    def test_unknown_faction_dropped(self):
+        assert _constrain([_fac("made_up_faction", -10)]) == []
+
+    def test_no_registry_drops_every_faction_change(self):
+        assert _constrain([_fac("merchant_guild", -10)], faction_registry=None) == []
+
+    def test_gain_only_with_the_npcs_own_faction(self):
+        assert _constrain([_fac("merchant_guild", 5)]) == [_fac("merchant_guild", 5)]
+        assert _constrain([_fac("knights", 5)]) == []
+        assert _constrain([_fac("merchant_guild", 5)], npc_faction_id=None) == []
+
+    def test_loss_allowed_with_any_real_faction(self):
+        assert _constrain([_fac("knights", -20)]) == [_fac("knights", -20)]
+
+    def test_invented_flag_dropped(self):
+        assert _constrain([_flag("any_quest_flag_i_like")]) == []
+
+    def test_listed_story_flag_kept(self):
+        assert _constrain([_flag("heard_the_bell")]) == [_flag("heard_the_bell")]
+
+    def test_crime_flags_kept(self):
+        kept = _constrain([_flag("wanted_in:merchant_quarter"), _flag("bounty_merchant_guild")])
+        assert [m["flag"] for m in kept] == ["wanted_in:merchant_quarter", "bounty_merchant_guild"]
+
+    def test_one_change_per_target_per_turn(self):
+        assert _constrain([_rel(5), _rel(5), _rel(5)]) == [_rel(5, "halvric")]
+
+
+class TestSessionGainCaps:
+    async def _apply(self, db, mutations, session_id="sess_a"):
+        capped = await apply_session_gain_caps(db, "char_001", session_id, mutations)
+        relationships: dict[str, int] = {}
+        standing: dict[str, int] = {}
+        await apply_world_mutations(
+            db,
+            character_id="char_001",
+            mutations=capped,
+            faction_standing=standing,
+            relationships=relationships,
+            faction_registry=_REGISTRY,
+            session_id=session_id,
+        )
+        await db.flush()
+        return capped
+
+    @pytest.mark.asyncio
+    async def test_relationship_gains_stop_at_the_session_cap(self, db):
+        total = 0
+        for _ in range(10):
+            capped = await self._apply(db, [_rel(MAX_POSITIVE_DELTA_PER_TURN, "halvric")])
+            total += sum(m["delta"] for m in capped)
+        assert total == MAX_POSITIVE_RELATIONSHIP_PER_SESSION
+
+    @pytest.mark.asyncio
+    async def test_faction_gains_stop_at_the_session_cap(self, db):
+        total = 0
+        for _ in range(10):
+            capped = await self._apply(db, [_fac("merchant_guild", MAX_POSITIVE_DELTA_PER_TURN)])
+            total += sum(m["delta"] for m in capped)
+        assert total == MAX_POSITIVE_FACTION_PER_SESSION
+
+    @pytest.mark.asyncio
+    async def test_cap_is_per_session_and_per_npc(self, db):
+        for _ in range(10):
+            await self._apply(db, [_rel(5, "halvric")])
+        other_npc = await self._apply(db, [_rel(5, "tinte")])
+        new_session = await self._apply(db, [_rel(5, "halvric")], session_id="sess_b")
+        assert other_npc == [_rel(5, "tinte")]
+        assert new_session == [_rel(5, "halvric")]
+
+    @pytest.mark.asyncio
+    async def test_losses_and_flags_are_never_capped(self, db):
+        for _ in range(10):
+            await self._apply(db, [_rel(5, "halvric")])
+        mutations = [_rel(-30, "halvric"), _flag("wanted_in:merchant_quarter")]
+        assert await self._apply(db, mutations) == mutations
 
 
 # ---------------------------------------------------------------------------
@@ -100,9 +216,10 @@ class TestValidateWorldMutations:
         result = validate_world_mutations([{"type": "faction_standing_change", "delta": -10, "reason": "test"}])
         assert result == []
 
-    def test_missing_npc_id_skipped(self):
+    def test_relationship_change_needs_no_npc_id(self):
+        """The LLM is not told NPC ids; the scene assigns the target later."""
         result = validate_world_mutations([{"type": "relationship_change", "delta": -10, "reason": "test"}])
-        assert result == []
+        assert result == [{"type": "relationship_change", "npc_id": "", "delta": -10, "reason": "test"}]
 
     def test_missing_flag_skipped(self):
         result = validate_world_mutations([{"type": "world_flag_set", "reason": "test"}])
@@ -112,13 +229,24 @@ class TestValidateWorldMutations:
         result = validate_world_mutations(
             [{"type": "faction_standing_change", "faction_id": "guild", "delta": 200, "reason": "test"}]
         )
-        assert result[0]["delta"] == _MAX_MUTATION_DELTA
+        assert result[0]["delta"] == MAX_POSITIVE_DELTA_PER_TURN
 
     def test_delta_clamped_to_negative_max(self):
         result = validate_world_mutations(
             [{"type": "faction_standing_change", "faction_id": "guild", "delta": -200, "reason": "test"}]
         )
-        assert result[0]["delta"] == -_MAX_MUTATION_DELTA
+        assert result[0]["delta"] == -MAX_NEGATIVE_DELTA
+
+    def test_gains_are_capped_far_below_losses(self):
+        """Trust is slow to earn: one turn cannot move a tier."""
+        assert MAX_POSITIVE_DELTA_PER_TURN < 11  # below the first positive tier threshold
+        assert MAX_POSITIVE_DELTA_PER_TURN < MAX_NEGATIVE_DELTA
+
+    def test_non_numeric_delta_dropped(self):
+        result = validate_world_mutations(
+            [{"type": "faction_standing_change", "faction_id": "guild", "delta": "lots", "reason": "test"}]
+        )
+        assert result == []
 
     def test_zero_delta_dropped(self):
         result = validate_world_mutations(
@@ -348,8 +476,8 @@ class TestAnalysisToolWorldMutations:
         assert "relationship_change" in item_props["type"]["enum"]
         assert "world_flag_set" in item_props["type"]["enum"]
         # Delta is clamped
-        assert item_props["delta"]["minimum"] == -50
-        assert item_props["delta"]["maximum"] == 50
+        assert item_props["delta"]["minimum"] == -MAX_NEGATIVE_DELTA
+        assert item_props["delta"]["maximum"] == MAX_POSITIVE_DELTA_PER_TURN
 
     def test_world_mutations_not_required(self):
         """world_mutations is optional — existing analysis results without it still pass."""

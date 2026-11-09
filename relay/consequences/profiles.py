@@ -124,7 +124,7 @@ def filter_mutations_by_profile(
             # crime-related pass through
             if mut_type == "world_flag_set":
                 flag = m.get("flag", "")
-                if not _is_crime_flag(flag):
+                if not is_crime_flag(flag):
                     filtered.append(m)
             continue
 
@@ -134,13 +134,13 @@ def filter_mutations_by_profile(
                 continue
             if mut_type == "world_flag_set":
                 flag = m.get("flag", "")
-                if _is_crime_flag(flag):
+                if is_crime_flag(flag):
                     continue
             filtered.append(m)
 
     return filtered
 
 
-def _is_crime_flag(flag: str) -> bool:
-    """Heuristic: flags prefixed with 'wanted_in:' or 'bounty' are crime flags."""
+def is_crime_flag(flag: str) -> bool:
+    """Flags the consequence system itself defines: ``wanted_in:<region>`` and ``bounty...``."""
     return flag.startswith("wanted_in:") or flag.startswith("bounty")

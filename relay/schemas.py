@@ -169,6 +169,13 @@ class NpcRelationship(BaseModel):
     description: str
 
 
+class NpcStoryFlag(BaseModel):
+    """A story flag the LLM may set while speaking as this NPC, and when."""
+
+    flag: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    set_when: str = Field(min_length=1)
+
+
 class NpcSecret(BaseModel):
     content: str
     reveal_condition: Literal["relationship_threshold", "quest_flag", "check_type_and_dc", "never"]
@@ -292,6 +299,7 @@ class NpcPersonality(BaseModel):
     knowledge_boundaries: NpcKnowledgeBoundaries
     relationships: list[NpcRelationship]
     secrets: list[NpcSecret] = Field(min_length=1)
+    story_flags: list[NpcStoryFlag] | None = None
     few_shot_examples: list[FewShotExample] = Field(min_length=2)
     manipulation_resistance_examples: list[ManipulationResistanceExample] = Field(min_length=1)
     animation_profile: AnimationProfile

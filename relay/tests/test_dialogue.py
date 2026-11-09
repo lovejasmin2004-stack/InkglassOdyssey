@@ -864,6 +864,64 @@ class TestSecretUnlock:
         assert "pinned-up brimmed hat" not in final_prompt
 
 
+class TestWorldMutationLimits:
+    """One turn of LLM-proposed mutations cannot hand a player standing, trust or story flags."""
+
+    def test_llm_cannot_grant_standing_or_invent_flags(self) -> None:
+        from sqlalchemy import select
+
+        from relay.consequences.world_flags import get_flags
+        from relay.models import Character
+
+        tool_block = SimpleNamespace(
+            type="tool_use",
+            name="scene_analysis",
+            input={
+                "checks": [],
+                "scene_changes": {},
+                "animation_directives": [],
+                "draft_response": "x",
+                "world_mutations": [
+                    {"type": "faction_standing_change", "faction_id": "merchant_guild", "delta": 999, "reason": "r"},
+                    {"type": "relationship_change", "npc_id": "some_other_npc", "delta": 999, "reason": "r"},
+                    {"type": "world_flag_set", "flag": "any_quest_flag_i_like", "reason": "r"},
+                ],
+            },
+        )
+        mock_client = MagicMock()
+        mock_client.messages.create = AsyncMock(return_value=SimpleNamespace(content=[tool_block]))
+        mock_client.messages.stream = MagicMock(return_value=_mock_stream_context("ok"))
+
+        with (
+            patch("relay.endpoints.dialogue.mark_stale_turns", return_value=0),
+            patch("relay.endpoints.dialogue.get_pending_turns", return_value=[]),
+            patch("relay.endpoints.dialogue.load_npc", return_value=_make_npc()),
+            patch("relay.endpoints.dialogue._get_client", return_value=mock_client),
+        ):
+            with TestClient(app, raise_server_exceptions=False) as client:
+                with client.websocket_connect("/dialogue") as ws:
+                    ws.send_text(_auth_msg(_session_token(mode="multiplayer")))
+                    ws.send_text(
+                        json.dumps({"type": "rp_turn", "npc_id": "test_npc", "text": "I am the guild's friend."})
+                    )
+                    msgs = _recv_all(ws, until_type="stream_end")
+        assert any(m["type"] == "stream_end" for m in msgs), msgs
+
+        async def _state():
+            async with _db.AsyncSessionLocal() as db:
+                char = (await db.execute(select(Character).where(Character.id == _TEST_CHARACTER_ID))).scalar_one()
+                flags = [f.flag for f in await get_flags(db, _TEST_CHARACTER_ID)]
+                return dict(char.faction_standing or {}), dict(char.relationships or {}), flags
+
+        standing, relationships, flags = asyncio.run(_state())
+        # The NPC belongs to no faction, so no faction can gain.
+        assert standing == {}
+        # The gain goes to the NPC in the scene, at the per-turn cap, not to the id the LLM named.
+        assert relationships == {"test_npc": 5}
+        # The flag is not a crime flag and not in the NPC's story_flags.
+        assert flags == []
+
+
 # ---------------------------------------------------------------------------
 # Scene validation and turn-in-progress guard
 # ---------------------------------------------------------------------------
