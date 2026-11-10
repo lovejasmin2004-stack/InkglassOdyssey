@@ -29,6 +29,7 @@ TxType = Literal[
     "gather_fail",
     "craft",
     "craft_fail",
+    "consume",
 ]
 
 
@@ -202,7 +203,7 @@ async def log_item_transaction(
 ) -> None:
     """Write a TransactionLog entry for a non-currency item event.
 
-    Used by craft/gather/gather_fail/craft_fail — events that affect inventory
+    Used by craft/gather/gather_fail/craft_fail/consume — events that affect inventory
     but not the wallet balance.  Centralises TransactionLog construction so
     callers don't duplicate the boilerplate.
     """

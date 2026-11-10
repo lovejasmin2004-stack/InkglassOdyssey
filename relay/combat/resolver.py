@@ -10,6 +10,7 @@ import logging
 import random
 
 from relay.checks.resolver import ability_modifier, proficiency_bonus, roll_d20
+from relay.combat.damage import parse_formula
 
 logger = logging.getLogger(__name__)
 
@@ -90,18 +91,25 @@ def compute_ac(
     return max(total_ac, 0)
 
 
-def roll_dice(notation: str) -> tuple[int, list[int]]:
-    """Roll dice from notation like '2d6', '1d8', '3d10'. Returns (total, individual_rolls)."""
+def _parse_notation(notation: str) -> tuple[int, int, int]:
+    """Parse 'NdM', 'dM', 'NdM+K', 'NdM-K' or flat 'K' into (count, sides, flat modifier)."""
     notation = notation.strip().lower()
-    if "d" not in notation:
-        val = int(notation)
-        return val, [val]
+    if notation.startswith("d"):
+        notation = "1" + notation
+    return parse_formula(notation)
 
-    parts = notation.split("d")
-    count = int(parts[0]) if parts[0] else 1
-    sides = int(parts[1])
+
+def roll_dice(notation: str) -> tuple[int, list[int]]:
+    """Roll dice from notation like '2d6', '1d8' or '2d4+2'. Returns (total, individual_rolls).
+
+    The total includes any flat modifier; the rolls list holds the dice only.
+    A flat number ('3') returns (3, [3]).
+    """
+    count, sides, modifier = _parse_notation(notation)
+    if count == 0:
+        return modifier, [modifier]
     rolls = [random.randint(1, sides) for _ in range(count)]
-    return sum(rolls), rolls
+    return sum(rolls) + modifier, rolls
 
 
 def attack_roll(
@@ -208,19 +216,19 @@ def damage_roll(
         )
         damage_type = "bludgeoning"
 
-    notation = damage_dice.strip().lower()
-    parts = notation.split("d")
-    count = int(parts[0]) if parts[0] else 1
-    sides = int(parts[1])
+    count, sides, flat_modifier = _parse_notation(damage_dice)
 
     if critical:
         count *= 2
 
     rolls = [random.randint(1, sides) for _ in range(count)]
-    total = sum(rolls) + ability_mod
+    # A weak attacker can roll low, but a hit never heals the target.
+    total = max(0, sum(rolls) + flat_modifier + ability_mod)
 
+    rolled = f"{count}d{sides}" if count else str(flat_modifier)
     result = {
-        "damage_dice": f"{count}d{sides}",
+        "damage_dice": rolled,
+        "flat_modifier": flat_modifier,
         "rolls": rolls,
         "ability_modifier": ability_mod,
         "raw_total": total,
@@ -231,7 +239,7 @@ def damage_roll(
     logger.info(
         "Damage roll resolved",
         extra={
-            "damage_dice": f"{count}d{sides}",
+            "damage_dice": rolled,
             "damage_type": damage_type,
             "raw_total": total,
             "critical": critical,

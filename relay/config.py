@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     # When true, the analysis call does not draft the reply, so the reply starts
     # streaming sooner and is written once instead of twice.
     rp_fast_analysis: bool = Field(default=False, alias="INKGLASS_RP_FAST_ANALYSIS")
+    # Comma-separated player ids allowed to open a multiplayer session as DM.
+    # Empty means nobody can (outside ADMIN_MODE). Stands in for "the room
+    # creator is the DM" until rooms exist.
+    dm_player_ids: str = Field(default="", alias="INKGLASS_DM_PLAYER_IDS")
+
+    def may_run_as_dm(self, player_id: str) -> bool:
+        """True if this player may open a session with the DM role."""
+        allowed = {part.strip() for part in self.dm_player_ids.split(",") if part.strip()}
+        return self.admin_mode or player_id in allowed
 
     @model_validator(mode="after")
     def _check_required_secrets(self) -> Settings:

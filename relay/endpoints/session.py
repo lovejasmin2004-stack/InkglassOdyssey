@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from relay.auth.middleware import get_current_token
 from relay.auth.tokens import AccountTokenPayload, SessionTokenPayload, create_session_token
+from relay.config import settings
 from relay.database import get_db
 from relay.endpoints.scene import SceneResponse
 from relay.models import Character, GameSession, PendingTurn, Scene
@@ -258,6 +259,22 @@ async def start_session(body: SessionStartRequest, token: Token, db: DB) -> Sess
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"code": "forbidden", "message": f"World '{body.world_id}' requires Tier 2 access"},
         )
+
+    # The DM role unlocks every DM-only endpoint, so it is granted, never claimed:
+    # multiplayer only (a solo player is never their own DM), and only to players
+    # the owner has listed in INKGLASS_DM_PLAYER_IDS.
+    if body.role == "dm":
+        if body.mode != "multiplayer":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "invalid_role", "message": "The DM role exists only in multiplayer sessions"},
+            )
+        if not settings.may_run_as_dm(token.player_id):
+            logger.warning("DM role refused", extra={"player_id": token.player_id})
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"code": "forbidden", "message": "This account is not allowed to run sessions as DM"},
+            )
 
     # Verify character exists and belongs to the player
     result = await db.execute(select(Character).where(Character.id == body.character_id))

@@ -1,12 +1,20 @@
-"""Combat endpoints — resolve attacks, start encounters, manage turn order."""
+"""Combat endpoints — resolve attacks, start encounters, manage turn order.
+
+Players say what they do; the relay supplies the numbers (invariant #8 applied
+to clients as well as the LLM). A player attacks with an item their character
+holds, heals by using up a consumable, and gets environmental effects from the
+scene. Free-form weapons, free-form healing, asserted advantage and forced
+saving throws are for the DM or ADMIN_MODE only.
+"""
 
 from __future__ import annotations
 
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relay.auth.middleware import require_session_token
@@ -27,10 +35,16 @@ from relay.combat.resolver import (
     compute_save_dc,
     damage_roll,
     resolve_attack,
+    roll_dice,
     saving_throw,
 )
+from relay.config import settings
 from relay.database import get_db
+from relay.economy.shop import get_world_currency
+from relay.economy.wallet import log_item_transaction
 from relay.endpoints._helpers import load_character_any, load_character_owned
+from relay.handlers.inventory import InventoryHandler
+from relay.models import Character, Scene, StateChangeLog
 from relay.mutations import (
     ConditionChange,
     DeathStateChange,
@@ -45,6 +59,7 @@ from relay.state_log import (
     log_hp_change,
     log_rest,
 )
+from relay.world.item_loader import load_item
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +72,15 @@ router = APIRouter(prefix="/combat", tags=["combat"])
 
 
 class AttackRequest(BaseModel):
+    """An attack. Players name a weapon they hold; leave it out to strike unarmed.
+
+    ``weapon``, ``advantage`` and ``environmental_effects`` are DM/ADMIN_MODE only.
+    """
+
     attacker_id: str
     target_id: str
-    weapon: dict
+    weapon_item_id: str | None = None
+    weapon: dict | None = None
     proficient: bool = True
     advantage: bool = False
     disadvantage: bool = False
@@ -104,14 +125,23 @@ class InitiativeResponse(BaseModel):
 
 
 class HealRequest(BaseModel):
+    """Healing. Players use up a healing consumable held by ``user_id`` (default: the target).
+
+    ``healing`` (a fixed amount) is DM/ADMIN_MODE only.
+    """
+
     target_id: str
-    healing: int = Field(ge=1)
+    item_id: str | None = None
+    user_id: str | None = None
+    healing: int | None = Field(default=None, ge=1)
 
 
 class HealResponse(BaseModel):
     hp_after: int
     hp_max: int
     left_death_state: bool
+    healing: int = 0
+    item_consumed: str | None = None
 
 
 class TickConditionsRequest(BaseModel):
@@ -134,6 +164,63 @@ class RestResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Who may assert numbers, and where players' numbers come from
+# ---------------------------------------------------------------------------
+
+UNARMED_STRIKE: dict = {
+    "name": "Unarmed strike",
+    "stats": {"damage_dice": "1", "damage_type": "bludgeoning", "modifier_source": "strength"},
+}
+
+
+def _is_dm(token: SessionTokenPayload) -> bool:
+    return settings.admin_mode or token.role == "dm"
+
+
+def _dm_only(what: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={"code": "forbidden", "message": f"{what} can only be set by the DM"},
+    )
+
+
+def _bad_request(code: str, message: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"code": code, "message": message})
+
+
+def _holds(character: Character, item_id: str) -> bool:
+    """True if the item is in the character's inventory or equipped."""
+    if InventoryHandler(character).find(item_id) is not None:
+        return True
+    equipped = (character.equipped_gear or {}).values()
+    return any(slot == item_id or (isinstance(slot, dict) and slot.get("item_id") == item_id) for slot in equipped)
+
+
+async def _held_weapon(character: Character, item_id: str) -> dict:
+    """The weapon's authored stats, if the character holds it. Raises 400 otherwise."""
+    if not _holds(character, item_id):
+        raise _bad_request("item_not_held", f"{character.name} does not have {item_id}")
+    item = await load_item(item_id, character.world_id)
+    if item is None or item.type != "weapon" or not (item.stats or {}).get("damage_dice"):
+        raise _bad_request("not_a_weapon", f"{item_id} cannot be used to attack")
+    return {"name": item.name, "stats": item.stats}
+
+
+async def _scene_environment(db: AsyncSession, session_id: str) -> list[str]:
+    """Environmental effects of the session's active scene (set by the DM or the relay)."""
+    result = await db.execute(
+        select(Scene)
+        .where(Scene.session_id == session_id, Scene.status == "active")
+        .order_by(Scene.started_at.desc())
+        .limit(1)
+    )
+    scene = result.scalar_one_or_none()
+    if scene is None:
+        return []
+    return list((scene.scene_state or {}).get("environmental_effects") or [])
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -145,8 +232,29 @@ async def post_attack(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> AttackResponse:
     """Resolve a single attack: roll, hit/miss, damage, apply to target."""
-    attacker = await load_character_owned(db, body.attacker_id, token.player_id)
+    is_dm = _is_dm(token)
+    attacker = (
+        await load_character_any(db, body.attacker_id)
+        if is_dm
+        else await load_character_owned(db, body.attacker_id, token.player_id)
+    )
     target = await load_character_any(db, body.target_id)
+
+    if not is_dm:
+        if body.weapon is not None:
+            raise _dm_only("Free-form weapon stats")
+        if body.advantage:
+            raise _dm_only("Advantage")
+        if body.environmental_effects:
+            raise _dm_only("Environmental effects")
+
+    if body.weapon is not None:
+        weapon = body.weapon
+    elif body.weapon_item_id is not None:
+        weapon = await _held_weapon(attacker, body.weapon_item_id)
+    else:
+        weapon = UNARMED_STRIKE
+    environmental_effects = body.environmental_effects or await _scene_environment(db, token.session_id)
 
     attacker_conditions = attacker.conditions or []
     target_conditions = target.conditions or []
@@ -162,7 +270,7 @@ async def post_attack(
         has_disadvantage = True
 
     # (#8) Data-driven environmental effects
-    for effect in body.environmental_effects:
+    for effect in environmental_effects:
         env = ENVIRONMENT_COMBAT_EFFECTS.get(effect, {})
         if env.get("attack") == "advantage":
             has_advantage = True
@@ -172,7 +280,7 @@ async def post_attack(
     atk = attack_roll(
         attacker.ability_scores,
         attacker.level,
-        body.weapon,
+        weapon,
         proficient=body.proficient,
         advantage=has_advantage,
         disadvantage=has_disadvantage,
@@ -191,7 +299,7 @@ async def post_attack(
         )
 
     dmg = damage_roll(
-        body.weapon,
+        weapon,
         attacker.ability_scores,
         critical=result["critical"],
     )
@@ -217,7 +325,7 @@ async def post_attack(
             hp_max=target.hp_max,
             source="combat_attack",
             source_id=attacker.id,
-            reason=f"attack with {body.weapon.get('name', 'weapon')}",
+            reason=f"attack with {weapon.get('name', 'weapon')}",
         ),
     )
 
@@ -274,8 +382,15 @@ async def post_save(
     token: Annotated[SessionTokenPayload, Depends(require_session_token)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> SaveResponse:
-    """Force a saving throw on the defender."""
-    attacker = await load_character_owned(db, body.attacker_id, token.player_id)
+    """Force a saving throw on the defender. DM or ADMIN_MODE only.
+
+    The caller chooses the damage dice and the condition, so until characters
+    have known abilities for the relay to look those up from, a player may not
+    call this.
+    """
+    if not _is_dm(token):
+        raise _dm_only("Forced saving throws")
+    attacker = await load_character_any(db, body.attacker_id)
     defender = await load_character_any(db, body.defender_id)
 
     dc = compute_save_dc(attacker.ability_scores, attacker.level, body.dc_source_ability)
@@ -312,8 +427,6 @@ async def post_save(
 
     if not save_result["passed"]:
         if body.damage_dice:
-            from relay.combat.resolver import roll_dice
-
             total, rolls = roll_dice(body.damage_dice)
             dmg_result = {
                 "damage_dice": body.damage_dice,
@@ -366,8 +479,6 @@ async def post_save(
                 ),
             )
     elif body.half_on_save and body.damage_dice:
-        from relay.combat.resolver import roll_dice
-
         total, rolls = roll_dice(body.damage_dice)
         halved = total // 2
         dmg_result = {
@@ -434,14 +545,51 @@ async def post_heal(
     token: Annotated[SessionTokenPayload, Depends(require_session_token)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> HealResponse:
-    """Apply healing to a character, potentially leaving death state."""
-    target = await load_character_owned(db, body.target_id, token.player_id)
+    """Apply healing to a character, potentially leaving death state.
+
+    Players heal by using up a consumable with ``healing_dice``; the relay rolls
+    the amount. A fixed ``healing`` amount is DM/ADMIN_MODE only.
+    """
+    if (body.item_id is None) == (body.healing is None):
+        raise _bad_request("invalid_request", "Give either item_id or healing, not both")
+
+    item_user: Character | None = None
+    if body.healing is not None:
+        if not _is_dm(token):
+            raise _dm_only("A healing amount")
+        target = await load_character_any(db, body.target_id)
+        healing = body.healing
+        heal_reason = "healing applied"
+    else:
+        item_user = await load_character_owned(db, body.user_id or body.target_id, token.player_id)
+        target = item_user if item_user.id == body.target_id else await load_character_any(db, body.target_id)
+        inventory = InventoryHandler(item_user)
+        if inventory.find(body.item_id) is None:
+            raise _bad_request("item_not_held", f"{item_user.name} does not have {body.item_id}")
+        item = await load_item(body.item_id, item_user.world_id)
+        healing_dice = (item.stats or {}).get("healing_dice") if item is not None else None
+        if item is None or item.type != "consumable" or not healing_dice:
+            raise _bad_request("not_usable", f"{body.item_id} does not heal")
+        healing = max(1, roll_dice(healing_dice)[0])
+        heal_reason = f"used {item.name}"
+        inventory.remove_item(body.item_id, 1)
+        inventory.persist()
+        await log_item_transaction(
+            db,
+            item_user,
+            tx_type="consume",
+            item_id=body.item_id,
+            item_quantity=-1,
+            currency=get_world_currency(item_user.world_id),
+            session_id=token.session_id,
+            note=f"Healed {target.id} for {healing}",
+        )
 
     hp_before = target.hp_current
     in_death_state = target.hp_current == 0
 
     if in_death_state:
-        result = heal_from_death_state(target.hp_current, body.healing, target.exhaustion_level)
+        result = heal_from_death_state(target.hp_current, healing, target.exhaustion_level)
         target.hp_current = min(result["hp_current"], target.hp_max)
         left_death = not result["in_death_state"]
         if left_death:
@@ -460,19 +608,20 @@ async def post_heal(
                 ),
             )
     else:
-        target.hp_current = min(target.hp_current + body.healing, target.hp_max)
+        target.hp_current = min(target.hp_current + healing, target.hp_max)
         left_death = False
 
     await log_hp_change(
         db,
         HPChange(
             character_id=target.id,
-            value=body.healing,
+            value=healing,
             hp_before=hp_before,
             hp_after=target.hp_current,
             hp_max=target.hp_max,
             source="healing",
-            reason="healing applied",
+            source_id=item_user.id if item_user is not None else None,
+            reason=heal_reason,
         ),
     )
 
@@ -482,6 +631,8 @@ async def post_heal(
         hp_after=target.hp_current,
         hp_max=target.hp_max,
         left_death_state=left_death,
+        healing=healing,
+        item_consumed=body.item_id,
     )
 
 
@@ -526,10 +677,37 @@ async def post_rest(
     Short rest: no immediate HP effect in Phase 0 (hit-dice spending deferred).
     Long rest: restore HP to max, reduce exhaustion by 1.
     Both clear death state tracking if no longer at 0 HP.
+
+    The combat design doc places long rests in safe locations between sessions.
+    Locations carry no safety data yet, so the relay enforces the part it can:
+    a player gets one long rest per session. The DM may grant more.
     """
     from relay.combat.conditions import reduce_exhaustion
 
-    char = await load_character_owned(db, body.character_id, token.player_id)
+    is_dm = _is_dm(token)
+    char = (
+        await load_character_any(db, body.character_id)
+        if is_dm
+        else await load_character_owned(db, body.character_id, token.player_id)
+    )
+
+    if body.rest_type == "long" and not is_dm:
+        already_rested = await db.scalar(
+            select(func.count())
+            .select_from(StateChangeLog)
+            .where(StateChangeLog.character_id == char.id)
+            .where(StateChangeLog.session_id == token.session_id)
+            .where(StateChangeLog.change_type == "rest")
+            .where(StateChangeLog.rest_type == "long")
+        )
+        if already_rested:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "rest_unavailable",
+                    "message": "This character has already taken a long rest this session",
+                },
+            )
 
     hp_before = char.hp_current
     exhaustion_before = char.exhaustion_level
@@ -553,6 +731,7 @@ async def post_rest(
             exhaustion_before=exhaustion_before,
             exhaustion_after=char.exhaustion_level,
         ),
+        session_id=token.session_id,
     )
     if exhaustion_before != char.exhaustion_level:
         await log_exhaustion_change(
