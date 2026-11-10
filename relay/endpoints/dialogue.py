@@ -19,7 +19,7 @@ Improvements (step 7 — RP mode):
  - (#R5)  load_npc uses session world_id
  - (#R6)  Atomic commit (pending turn + scene state in one transaction)
  - (#R7)  Expanded scene_changes schema (environment_add/remove)
- - (#R8)  in_flight guard covers solo check_confirm pause
+ - (#R8)  turn_in_progress guard covers a running turn and the solo check_confirm pause
  - (#R9)  check_confirm validates player ownership
  - (#R10) Passive check hints injected into final prose call
  - (#R11) Full NPC response stored in turn history (no truncation)
@@ -27,6 +27,8 @@ Improvements (step 7 — RP mode):
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import copy
 import json
 import logging
@@ -368,7 +370,6 @@ async def dialogue_ws(ws: WebSocket) -> None:
 
     scene_histories: OrderedDict[str, list[dict[str, str]]] = OrderedDict()
     last_message_time: float = 0.0
-    in_flight = False
 
     # Single Anthropic client for the lifetime of this connection (#9).
     client = _get_client()
@@ -390,10 +391,45 @@ async def dialogue_ws(ws: WebSocket) -> None:
         "check_total_count": 0,
     }
 
+    # Frames from the turn task and the receive loop (heartbeat acks, errors) can
+    # interleave, so serialise them: one whole frame at a time.
+    send_lock = asyncio.Lock()
+    raw_send_json = ws.send_json
+
+    async def _send_json_locked(data: object, mode: str = "text") -> None:
+        async with send_lock:
+            await raw_send_json(data, mode)
+
+    ws.send_json = _send_json_locked  # type: ignore[method-assign]
+
+    # A turn runs as its own task so this loop keeps reading: heartbeats are
+    # answered mid-turn, and a second turn sent meanwhile is refused at once
+    # with turn_in_progress instead of queueing behind the first.
+    turn_task: asyncio.Task | None = None
+    recv_task: asyncio.Task | None = None
+
     try:
         while True:
-            raw = await ws.receive_text()
-            msg = json.loads(raw)
+            if recv_task is None:
+                recv_task = asyncio.create_task(ws.receive_text())
+            waiting = {recv_task} if turn_task is None else {recv_task, turn_task}
+            done, _ = await asyncio.wait(waiting, return_when=asyncio.FIRST_COMPLETED)
+
+            if turn_task is not None and turn_task.done():
+                finished, turn_task = turn_task, None
+                finished.result()  # re-raise a handler failure; handled below
+            if recv_task not in done:
+                continue
+            raw = recv_task.result()  # raises WebSocketDisconnect when the client leaves
+            recv_task = None
+
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                msg = None
+            if not isinstance(msg, dict):
+                await _send_error(ws, "protocol_error", "Messages must be JSON objects")
+                continue
             msg_type = msg.get("type")
 
             if msg_type == "heartbeat":
@@ -401,44 +437,54 @@ async def dialogue_ws(ws: WebSocket) -> None:
                 continue
 
             # check_confirm resumes an existing turn — exempt from rate limit.
-            if msg_type == "check_confirm":
-                await _handle_check_confirm(
-                    ws,
-                    msg,
-                    client,
-                    pending_check_proposals,
-                    scene_histories,
-                    player_id=player_id,
-                    analytics=connection_analytics,
-                )
+            if msg_type != "check_confirm":
+                now = time.time()
+                if now - last_message_time < _RATE_LIMIT_SECONDS:
+                    await _send_error(ws, "rate_limited", "Please wait before sending another message")
+                    continue
+                last_message_time = now
+
+            if turn_task is not None:
+                await _send_error(ws, "turn_in_progress", "A turn is already being processed")
                 continue
 
-            now = time.time()
-            if now - last_message_time < _RATE_LIMIT_SECONDS:
-                await _send_error(ws, "rate_limited", "Please wait before sending another message")
+            if msg_type == "check_confirm":
+                turn_task = asyncio.create_task(
+                    _handle_check_confirm(
+                        ws,
+                        msg,
+                        client,
+                        pending_check_proposals,
+                        scene_histories,
+                        player_id=player_id,
+                        analytics=connection_analytics,
+                    )
+                )
                 continue
-            last_message_time = now
 
             # (#2) turn_resume re-enters pipeline from last saved stage.
             # Rate-limited because it triggers new LLM calls.
             if msg_type == "turn_resume":
-                await _handle_turn_resume(
-                    ws,
-                    msg,
-                    client,
-                    scene_histories,
-                    player_id,
-                    session_mode=session_mode,
-                    pending_check_proposals=pending_check_proposals,
-                    world_id=world_id,
-                    session_id=session_id,
-                    analytics=connection_analytics,
-                    triggered_passive_elements=triggered_passive_elements,
+                turn_task = asyncio.create_task(
+                    _handle_turn_resume(
+                        ws,
+                        msg,
+                        client,
+                        scene_histories,
+                        player_id,
+                        session_mode=session_mode,
+                        pending_check_proposals=pending_check_proposals,
+                        world_id=world_id,
+                        session_id=session_id,
+                        analytics=connection_analytics,
+                        triggered_passive_elements=triggered_passive_elements,
+                    )
                 )
                 continue
 
-            # (#R8) in_flight guard also covers pending check_confirm state
-            if in_flight or pending_check_proposals:
+            # (#R8) A turn paused for solo check confirmation blocks new turns
+            # until check_confirm clears it.
+            if pending_check_proposals:
                 await _send_error(ws, "turn_in_progress", "A turn is already being processed")
                 continue
 
@@ -448,14 +494,15 @@ async def dialogue_ws(ws: WebSocket) -> None:
                 await _send_error(ws, "not_found", f"Scene '{scene_id}' not found")
                 continue
 
-            in_flight = True
-            try:
-                if msg_type == "quickchat_turn":
-                    await _handle_quickchat(
+            if msg_type == "quickchat_turn":
+                turn_task = asyncio.create_task(
+                    _handle_quickchat(
                         ws, msg, history, player_id, client, world_id=world_id, analytics=connection_analytics
                     )
-                elif msg_type == "rp_turn":
-                    await _handle_rp_turn(
+                )
+            elif msg_type == "rp_turn":
+                turn_task = asyncio.create_task(
+                    _handle_rp_turn(
                         ws,
                         msg,
                         history,
@@ -468,15 +515,9 @@ async def dialogue_ws(ws: WebSocket) -> None:
                         analytics=connection_analytics,
                         triggered_passive_elements=triggered_passive_elements,
                     )
-                else:
-                    await _send_error(ws, "unknown_type", f"Unrecognised message type: {msg_type}")
-            finally:
-                # A turn paused for solo check confirmation stays blocked through
-                # pending_check_proposals (checked above), which check_confirm clears.
-                # in_flight must always be released here: check_confirm finishes the
-                # turn elsewhere and cannot reset it, so holding it would reject every
-                # later turn on this connection.
-                in_flight = False
+                )
+            else:
+                await _send_error(ws, "unknown_type", f"Unrecognised message type: {msg_type}")
 
     except WebSocketDisconnect:
         logger.info("WS disconnected", extra={"player_id": player_id})
@@ -487,6 +528,16 @@ async def dialogue_ws(ws: WebSocket) -> None:
             await ws.close(code=1011)
         except Exception:
             pass
+    finally:
+        # Stop reading, and stop an unfinished turn: its pending-turn record
+        # keeps the stage it reached, so the client can resume on reconnect.
+        for task in (recv_task, turn_task):
+            if task is not None and not task.done():
+                task.cancel()
+        for task in (recv_task, turn_task):
+            if task is not None:
+                with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect, Exception):
+                    await task
 
     # Flush per-connection analytics to session on disconnect (#R4).
     if connection_analytics["turn_count"] > 0:

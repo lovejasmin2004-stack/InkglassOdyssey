@@ -8,7 +8,10 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import threading
+import time
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1502,6 +1505,92 @@ class TestInFlightGuard:
                 msg = json.loads(ws.receive_text())
 
         assert msg["type"] == "stream_start", msg
+
+
+class TestConnectionStaysResponsive:
+    """A turn runs as a task, so the connection keeps reading while the LLM works."""
+
+    def _blocked_client(self, release: threading.Event) -> MagicMock:
+        """A client whose analysis call waits until the test releases it."""
+
+        async def _slow_create(**_kwargs):
+            while not release.is_set():
+                await asyncio.sleep(0.01)
+            return _mock_analysis_response()
+
+        mock_client = MagicMock()
+        mock_client.messages.create = AsyncMock(side_effect=_slow_create)
+        mock_client.messages.stream = MagicMock(return_value=_mock_stream_context("She nods."))
+        return mock_client
+
+    def _connect(self, mock_client):
+        return (
+            patch("relay.endpoints.dialogue.mark_stale_turns", return_value=0),
+            patch("relay.endpoints.dialogue.get_pending_turns", return_value=[]),
+            patch("relay.endpoints.dialogue.load_npc", return_value=_make_npc()),
+            patch("relay.endpoints.dialogue._get_client", return_value=mock_client),
+            patch("relay.endpoints.dialogue._RATE_LIMIT_SECONDS", 0),
+        )
+
+    _TURN: ClassVar[dict] = {"type": "rp_turn", "npc_id": "test_npc", "text": "Hello."}
+
+    def test_heartbeat_answered_and_second_turn_refused_mid_turn(self) -> None:
+        release = threading.Event()
+        mock_client = self._blocked_client(release)
+        p1, p2, p3, p4, p5 = self._connect(mock_client)
+        with p1, p2, p3, p4, p5, TestClient(app, raise_server_exceptions=False) as client:
+            with client.websocket_connect("/dialogue") as ws:
+                ws.send_text(_auth_msg(_session_token(mode="multiplayer")))
+                ws.send_text(json.dumps(self._TURN))
+                assert json.loads(ws.receive_text())["type"] == "stream_start"
+
+                # The analysis call is still running: the relay must answer anyway.
+                ws.send_text(json.dumps({"type": "heartbeat"}))
+                assert json.loads(ws.receive_text())["type"] == "heartbeat_ack"
+
+                ws.send_text(json.dumps(self._TURN))
+                refused = json.loads(ws.receive_text())
+                assert (refused["type"], refused["code"]) == ("error", "turn_in_progress")
+                assert mock_client.messages.create.await_count == 1
+
+                release.set()
+                msgs = _recv_all(ws, until_type="stream_end")
+                assert msgs[-1]["type"] == "stream_end"
+
+                # The connection is free again afterwards.
+                ws.send_text(json.dumps(self._TURN))
+                assert json.loads(ws.receive_text())["type"] == "stream_start"
+                _recv_all(ws, until_type="stream_end")
+
+    def test_malformed_message_does_not_drop_the_connection(self) -> None:
+        release = threading.Event()
+        release.set()
+        p1, p2, p3, p4, p5 = self._connect(self._blocked_client(release))
+        with p1, p2, p3, p4, p5, TestClient(app, raise_server_exceptions=False) as client:
+            with client.websocket_connect("/dialogue") as ws:
+                ws.send_text(_auth_msg(_session_token(mode="multiplayer")))
+                for bad in ("{not json", "[1, 2]"):
+                    ws.send_text(bad)
+                    err = json.loads(ws.receive_text())
+                    assert (err["type"], err["code"]) == ("error", "protocol_error")
+                ws.send_text(json.dumps({"type": "heartbeat"}))
+                assert json.loads(ws.receive_text())["type"] == "heartbeat_ack"
+
+    def test_disconnect_mid_turn_stops_the_turn(self) -> None:
+        release = threading.Event()
+        mock_client = self._blocked_client(release)
+        p1, p2, p3, p4, p5 = self._connect(mock_client)
+        with p1, p2, p3, p4, p5, TestClient(app, raise_server_exceptions=False) as client:
+            with client.websocket_connect("/dialogue") as ws:
+                ws.send_text(_auth_msg(_session_token(mode="multiplayer")))
+                ws.send_text(json.dumps(self._TURN))
+                assert json.loads(ws.receive_text())["type"] == "stream_start"
+            # Socket closed while the analysis call was still waiting.
+            time.sleep(0.2)
+            release.set()
+            time.sleep(0.2)
+        # The cancelled turn never reached the reply call, so no further tokens were spent.
+        assert mock_client.messages.stream.call_count == 0
 
 
 # ---------------------------------------------------------------------------
