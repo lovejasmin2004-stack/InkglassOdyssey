@@ -4,7 +4,7 @@
 
 *Companion file: REFERENCES.md (patterns from existing games) — planned, not yet written.*
 
-*Last updated: September 2026 — Revision 5.1. Doc references, repository tree and tooling claims corrected to match the repository; anything not yet built is marked (planned). Subsystem design documents live in docs/. This file is the architectural spine; design docs carry the detail.*
+*Last updated: November 2026 — Revision 5.2. Adds the limits on LLM-proposed consequences, intent-based combat endpoints, the DM-role allowlist and the model settings; status notes corrected. Anything not yet built is marked (planned). Subsystem design documents live in docs/. This file is the architectural spine; design docs carry the detail.*
 
 ---
 
@@ -75,9 +75,23 @@ Both modes share architecture, relay, schemas, and content. Solo: 60–120 min s
 
 Two LLM calls per turn (three with solo check confirmation). Prompt caching on static sections mandatory.
 
+Models are settings, not constants: `INKGLASS_MODEL` writes replies, `INKGLASS_ANALYSIS_MODEL` (default: the same) runs call 1. Call 1 forces a tool call, which Claude Sonnet 5.5, Opus 5.5 and the Fable models reject, so those cannot run the analysis until it is rewritten. `INKGLASS_RP_FAST_ANALYSIS=true` drops the draft from call 1 so the reply is written once; it is off by default until it has been compared in a live playtest. Token usage per call is recorded in scene analytics and logged as "LLM usage".
+
+#### Limits on LLM-proposed consequences
+
+Call 1 may propose `world_mutations` (relationship, faction standing, flags). The relay treats them as proposals (invariant #8) and applies only what passes `constrain_world_mutations` and `apply_session_gain_caps` in relay/consequences/evaluator.py:
+
+- Relationship changes apply to the scene's NPC only, whatever id the model names.
+- Faction ids must exist in the world's faction files. Gains apply only to the NPC's own faction.
+- Per turn, a change is clamped to -30..+5. Per session, gains are capped at +15 relationship per NPC and +10 standing per faction. Losses are not capped per session.
+- Flags: crime flags (`wanted_in:{region}`, `bounty`) and the flags listed in the NPC file's `story_flags`. Anything else is dropped.
+- One change per target per turn.
+
+The prompt's ANALYSIS REFERENCE section tells the model the same ids and limits, so it rarely proposes what the relay would drop.
+
 #### WebSocket Protocol (WS /dialogue)
 
-JSON frames with type discriminator. Client → relay: `rp_turn`, `quickchat_turn`, `check_confirm`, `heartbeat`. Relay → client: `stream_start`, `stream_chunk`, `stream_end`, `check_proposal`, `check_result`, `animation_directive`, `scene_update`, `error`, `heartbeat_ack`. One message at a time per session; second in-flight turn returns error code `turn_in_progress`.
+JSON frames with type discriminator. Client → relay: `rp_turn`, `quickchat_turn`, `check_confirm`, `heartbeat`. Relay → client: `stream_start`, `stream_chunk`, `stream_end`, `check_proposal`, `check_result`, `animation_directive`, `scene_update`, `error`, `heartbeat_ack`. One turn at a time per connection; a second turn sent while one is in flight returns error code `turn_in_progress`. Heartbeats are answered while a turn is running (the turn runs as a task beside the receive loop), and a frame that is not a JSON object gets `protocol_error` without closing the connection.
 
 ### 2.3–2.9 Supporting Systems (Brief)
 
@@ -175,7 +189,7 @@ inkglass/
 │   ├── mutations.py                Typed audit models for state changes (source, reason, before/after)
 │   ├── state_log.py                Writes StateChangeLog rows from mutation models
 │   ├── migrations/                 Alembic
-│   ├── ai/                         rp_prompts.py, chat_prompts.py, npc_loader.py, game_context.py
+│   ├── ai/                         rp_prompts.py, chat_prompts.py, npc_sections.py, npc_loader.py, game_context.py
 │   ├── checks/                     resolver.py
 │   ├── combat/                     resolver.py, initiative.py, conditions.py, damage.py, death_state.py, lifecycle.py
 │   ├── companions/                 manager.py, combat_ai.py, ambient.py, loyalty.py, relationship.py
@@ -224,7 +238,7 @@ Only `wha_au` has content so far. It was moved from `inkglass_dark` in October 2
 
 All schemas are fully defined in docs/schemas reference.pdf. Pydantic models in relay/schemas.py mirror /schemas/*.json exactly. Schemas may also carry display-only annotations for the Workshop form: `description` (help text), and `x-groups` on the root with `x-group` on each property (section order, titles, and which sections start collapsed). Validation ignores them, and they never add fields.
 
-Fields added since docs/schemas reference.pdf was written (October 2026, all optional): `npc_personality` gained `appearance`, `cover_story`, `style_rules`, and `knowledge_boundaries.believes_wrongly`. These, plus `power_narrative`, `relationships` and `secrets`, are now sent to the AI in both RP and quick-chat prompts (relay/ai/npc_sections.py). Secrets are always in the prompt with an instruction to keep them hidden; whether one may be revealed on a turn is decided by the relay from a passed check reaching the secret's DC, the relationship score, or a story flag, never by the LLM. Content files are validated against their schema when saved through the Admin Workshop (relay/admin/reload.py). Every content file is also validated on every push by relay/tests/test_content_files.py (CI step 1), which reuses the Workshop's content-type registry; run it locally before committing.
+Fields added since docs/schemas reference.pdf was written (October 2026, all optional): `npc_personality` gained `appearance`, `cover_story`, `style_rules`, `knowledge_boundaries.believes_wrongly`, and (November) `story_flags`: the list of `{flag, set_when}` entries this NPC's scenes are allowed to set. In the same month `companion_data.abilities` changed from strings to objects (`name`, optional `damage_dice` / `healing_dice`) and `companion_data.confrontation_scene_id` was added. These, plus `power_narrative`, `relationships` and `secrets`, are now sent to the AI in both RP and quick-chat prompts (relay/ai/npc_sections.py). Secrets are always in the prompt with an instruction to keep them hidden; whether one may be revealed on a turn is decided by the relay from a passed check reaching the secret's DC, the relationship score, or a story flag, never by the LLM. The relationship score and story flags are themselves moved by LLM proposals, but only within the limits in Section 2.2, so a model cannot unlock a relationship-gated or flag-gated secret by proposing one large change. The hide instruction is a prompt instruction, not a guarantee: a model can still leak a secret it has been shown. Content files are validated against their schema when saved through the Admin Workshop (relay/admin/reload.py). Every content file is also validated on every push by relay/tests/test_content_files.py (CI step 1), which reuses the Workshop's content-type registry; run it locally before committing.
 
 ## 7. Code Conventions
 
@@ -278,7 +292,19 @@ POST /session/start, POST /session/end (includes level_increment + canon diff), 
 
 The full endpoint tables for companion, faction, narrative control, DM Workshop and admin endpoints that earlier revisions referred to are not in the repository (neither this file, CLAUDEmd.pdf nor docs/ contains them). docs/narrative control.pdf names the reset and admin reload endpoints. Rebuild the tables before implementing those surfaces.
 
-**Implemented as of September 2026** (relay, port 8000): POST /session/start, POST /session/{id}/end, GET /session/{id}/state, GET/POST /character, GET/PATCH /character/{id}, GET /me, WS /dialogue, POST /scene, GET/PATCH /scene/{id}, POST /scene/{id}/end, POST /dice/roll, POST /checks/implicit, POST /checks/contested, POST /combat/{attack,save,heal,initiative,rest,tick-conditions}, POST /companions/recruit, GET /companions/{character_id}, companion dismiss/incapacitate/recover/combat-action, GET faction standings and log, PATCH /factions/{faction_id}/standing, GET /shop/{npc_id} with buy/sell, POST /craft, POST /gather, wallet endpoints, GET /health. Admin app (port 8081): content CRUD + validation, RP Tester sessions. Not yet implemented: /npc, /quest, /lore/search, /canon, flora/fauna GET, /inventory, /traversal, player position, /analytics, narrative control and DM Workshop endpoints.
+**Implemented as of November 2026** (relay, port 8000): POST /session/start, POST /session/{id}/end, GET /session/{id}/state, GET/POST /character, GET/PATCH /character/{id}, GET /me, WS /dialogue, POST /scene, GET/PATCH /scene/{id}, POST /scene/{id}/end, POST /dice/roll, POST /checks/implicit, POST /checks/contested, POST /combat/{attack,save,heal,initiative,rest,tick-conditions}, POST /companions/recruit, GET /companions/{character_id}, companion dismiss/incapacitate/recover/combat-action/rest/directive, GET faction standings and log, PATCH /factions/{faction_id}/standing, GET /shop/{npc_id} with buy/sell, POST /craft, POST /gather, wallet endpoints, GET /health. Admin app (port 8081): content CRUD + validation, RP Tester sessions. Not yet implemented: /npc, /quest, /lore/search, /canon, flora/fauna GET, /inventory, /traversal, player position, /analytics, narrative control and DM Workshop endpoints.
+
+**Who supplies the numbers.** Players state intent and the relay looks the numbers up; only a DM session or `ADMIN_MODE` may assert them.
+
+- `/combat/attack`: a player sends `weapon_item_id` (an item the attacker holds; stats come from the item file) or nothing for an unarmed strike. Environmental effects come from the session's active scene. `weapon` (free-form stats), `advantage` and `environmental_effects` are DM only.
+- `/combat/heal`: a player sends `item_id` for a consumable with `healing_dice`, held by `user_id` (default: the target). The relay rolls, removes one from the stack and logs a `consume` transaction. A fixed `healing` amount is DM only.
+- `/combat/save`: DM only, because the caller picks the damage dice and condition. Characters have no known-abilities list for the relay to look them up from yet.
+- `/combat/rest`: a player gets one long rest per session (the design doc places long rests between sessions; locations have no safety data yet). The DM may grant more.
+- `/wallet/grant`: DM only.
+- Companion endpoints load the companion's stats from its NPC file, and recruitment reads world flags from the database; neither accepts them from the client.
+- Still client-asserted, pending a design decision: `level_increment` on session end (any session of 5+ turns), `current_turn` on `/combat/tick-conditions`, and `proficient` on attacks.
+
+Combat targets are rows in the characters table, so only player characters can be attacked or healed. NPCs and fauna have no combat state in the relay yet.
 
 ## 9. Database Migration
 
@@ -290,7 +316,7 @@ SQLite for Phase 0–1. Migration trigger: ≥3 concurrent multiplayer players o
 
 **Session tokens:** HS256 JWT (INKGLASS_JWT_SECRET), payload: player_id, world_id, session_id, tier, role (player | dm), mode (solo | multiplayer), iat, exp. Account token authenticates POST /session/start → returns session JWT. Validated on every HTTP request and WebSocket message.
 
-**Multiplayer DM:** room creator gets role: "dm". No mid-session transfer.
+**Multiplayer DM:** room creator gets role: "dm". No mid-session transfer. Rooms are not built yet, so for now POST /session/start grants the DM role only in a multiplayer session and only to player ids listed in `INKGLASS_DM_PLAYER_IDS` (empty by default; `ADMIN_MODE` bypasses). A solo session is never DM. The role is granted by the relay, never claimed by the client: it unlocks currency grants, protected character fields, scene state and free-form combat numbers.
 
 ## 11. Analytics
 
@@ -360,7 +386,7 @@ Fandom AU: no canon dialogue, no canon names, no recognisable locations. NPC fil
 
 **Phase 0 (Current):** Relay spine. Logging → Alembic → schemas → models → auth → character endpoints → WebSocket dialogue → session/scene → RAG → combat resolver → passive checks → factions → companions → admin interface (RP Tester + Workshop). No Unity.
 
-*Status, September 2026:* every Phase 0 step is built except RAG (no embeddings, no lore search, lore not injected into prompts). Built ahead of phase: economy, shops, crafting and gathering (Phase 2), plus design_proposals.md systems (consequences, narrative threads, event arcs, NPC generation, journal); generation and journal have no endpoints yet. Account tokens can only be minted in code (no application or sign-up flow). Not yet done: a live end-to-end RP session with a real API key, which should come before new systems.
+*Status, November 2026:* the Phase 0 steps have code and tests except RAG (no embeddings, no lore search, lore not injected into prompts), but several are not reachable from play: combat resolves only between player characters (no NPC or fauna combatants), passive checks and the consequence system run only inside RP turns, and nothing in an RP turn can start combat, a purchase or a quest. The scene narrator and Narrative Director (2.3–2.9) are not built. Built ahead of phase: economy, shops, crafting and gathering (Phase 2), plus design_proposals.md systems (consequences, narrative threads, event arcs, NPC generation, journal); generation and journal have no endpoints yet. Account tokens can only be minted in code (no application or sign-up flow). Not yet done: a live end-to-end RP session with a real API key, which should come before new systems.
 
 **Phase 1:** Unity vertical slice. One scene, one NPC, one combat encounter, character creation, FishNet host-only, basic traversal. Exit: 60–90 min RP session with visible NPC body language.
 
@@ -376,4 +402,4 @@ Fandom AU: no canon dialogue, no canon names, no recognisable locations. NPC fil
 
 Request clarification before proceeding for: schema changes, new service integrations, relay-as-source-of-truth changes, multi-world impacts, trust architecture changes, new dependencies, mixing RP/quick-chat, canon mutation procedure changes, new traversal types, economy changes, WebSocket protocol changes, error schema changes, condition/death mechanics, companion combat behaviour, faction propagation rules, workshop access changes, plot beat schema changes.
 
-*Last updated: September 2026. Revision 5.1. CLAUDE.md is canonical for architecture and conventions. Design documents in docs/ are canonical for subsystem specifications. If either disagrees with code, the code is wrong. Update when architecture, schemas, or conventions change.*
+*Last updated: November 2026. Revision 5.2. CLAUDE.md is canonical for architecture and conventions. Design documents in docs/ are canonical for subsystem specifications. If either disagrees with code, the code is wrong. Update when architecture, schemas, or conventions change.*
